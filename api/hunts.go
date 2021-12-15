@@ -4,11 +4,11 @@ import (
 	"fmt"
 
 	"github.com/Velocidex/ordereddict"
-	"github.com/golang/protobuf/ptypes/empty"
 	"github.com/sirupsen/logrus"
 	context "golang.org/x/net/context"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/emptypb"
 	"www.velocidex.com/golang/velociraptor/acls"
 	api_proto "www.velocidex.com/golang/velociraptor/api/proto"
 	file_store "www.velocidex.com/golang/velociraptor/file_store"
@@ -26,7 +26,7 @@ func (self *ApiServer) GetHuntFlows(
 	ctx context.Context,
 	in *api_proto.GetTableRequest) (*api_proto.GetTableResponse, error) {
 
-	user_name := GetGRPCUserInfo(self.config, ctx).Name
+	user_name := GetGRPCUserInfo(self.config, ctx, self.ca_pool).Name
 	permissions := acls.READ_RESULTS
 	perm, err := acls.CheckAccess(self.config, user_name, permissions)
 	if !perm || err != nil {
@@ -90,7 +90,7 @@ func (self *ApiServer) CreateHunt(
 	defer Instrument("CreateHunt")()
 
 	// Log this event as an Audit event.
-	in.Creator = GetGRPCUserInfo(self.config, ctx).Name
+	in.Creator = GetGRPCUserInfo(self.config, ctx, self.ca_pool).Name
 	in.HuntId = flows.GetNewHuntId()
 
 	acl_manager := vql_subsystem.NewServerACLManager(self.config, in.Creator)
@@ -123,12 +123,12 @@ func (self *ApiServer) CreateHunt(
 
 func (self *ApiServer) ModifyHunt(
 	ctx context.Context,
-	in *api_proto.Hunt) (*empty.Empty, error) {
+	in *api_proto.Hunt) (*emptypb.Empty, error) {
 
 	defer Instrument("ModifyHunt")()
 
 	// Log this event as an Audit event.
-	in.Creator = GetGRPCUserInfo(self.config, ctx).Name
+	in.Creator = GetGRPCUserInfo(self.config, ctx, self.ca_pool).Name
 
 	permissions := acls.COLLECT_CLIENT
 	perm, err := acls.CheckAccess(self.config, in.Creator, permissions)
@@ -149,7 +149,7 @@ func (self *ApiServer) ModifyHunt(
 		return nil, err
 	}
 
-	result := &empty.Empty{}
+	result := &emptypb.Empty{}
 	return result, nil
 }
 
@@ -159,7 +159,7 @@ func (self *ApiServer) ListHunts(
 
 	defer Instrument("ListHunts")()
 
-	user_name := GetGRPCUserInfo(self.config, ctx).Name
+	user_name := GetGRPCUserInfo(self.config, ctx, self.ca_pool).Name
 	permissions := acls.READ_RESULTS
 	perm, err := acls.CheckAccess(self.config, user_name, permissions)
 	if !perm || err != nil {
@@ -203,7 +203,7 @@ func (self *ApiServer) GetHunt(
 
 	defer Instrument("GetHunt")()
 
-	user_name := GetGRPCUserInfo(self.config, ctx).Name
+	user_name := GetGRPCUserInfo(self.config, ctx, self.ca_pool).Name
 	permissions := acls.READ_RESULTS
 	perm, err := acls.CheckAccess(self.config, user_name, permissions)
 	if !perm || err != nil {
@@ -225,7 +225,7 @@ func (self *ApiServer) GetHuntResults(
 
 	defer Instrument("GetHuntResults")()
 
-	user_name := GetGRPCUserInfo(self.config, ctx).Name
+	user_name := GetGRPCUserInfo(self.config, ctx, self.ca_pool).Name
 	permissions := acls.READ_RESULTS
 	perm, err := acls.CheckAccess(self.config, user_name, permissions)
 	if !perm || err != nil {

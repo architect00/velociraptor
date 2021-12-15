@@ -10,13 +10,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/golang/protobuf/ptypes/empty"
 	errors "github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 	context "golang.org/x/net/context"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/emptypb"
 	"www.velocidex.com/golang/velociraptor/acls"
 	api_proto "www.velocidex.com/golang/velociraptor/api/proto"
 	artifacts_proto "www.velocidex.com/golang/velociraptor/artifacts/proto"
@@ -36,7 +36,7 @@ import (
 
 func (self *ApiServer) ExportNotebook(
 	ctx context.Context,
-	in *api_proto.NotebookExportRequest) (*empty.Empty, error) {
+	in *api_proto.NotebookExportRequest) (*emptypb.Empty, error) {
 	return nil, errors.New("not implementated")
 }
 
@@ -49,7 +49,7 @@ func (self *ApiServer) GetNotebooks(
 	defer Instrument("GetNotebooks")()
 
 	// Empty creators are called internally.
-	user_name := GetGRPCUserInfo(self.config, ctx).Name
+	user_name := GetGRPCUserInfo(self.config, ctx, self.ca_pool).Name
 	user_record, err := users.GetUser(self.config, user_name)
 	if err != nil {
 		return nil, err
@@ -160,7 +160,7 @@ func (self *ApiServer) NewNotebook(
 
 	defer Instrument("NewNotebook")()
 
-	user_name := GetGRPCUserInfo(self.config, ctx).Name
+	user_name := GetGRPCUserInfo(self.config, ctx, self.ca_pool).Name
 	user_record, err := users.GetUser(self.config, user_name)
 	if err != nil {
 		return nil, err
@@ -282,7 +282,7 @@ func getCellsForHunt(ctx context.Context,
 		}
 	}
 
-	return getDefaultCellsForSources(config_obj, sources)
+	return getDefaultCellsForSources(config_obj, sources, notebook_metadata)
 }
 
 func getCellsForFlow(ctx context.Context,
@@ -300,11 +300,13 @@ func getCellsForFlow(ctx context.Context,
 		sources = flow_context.Request.Artifacts
 	}
 
-	return getDefaultCellsForSources(config_obj, sources)
+	return getDefaultCellsForSources(config_obj, sources, notebook_metadata)
 }
 
-func getDefaultCellsForSources(config_obj *config_proto.Config,
-	sources []string) []*api_proto.NotebookCellRequest {
+func getDefaultCellsForSources(
+	config_obj *config_proto.Config,
+	sources []string,
+	notebook_metadata *api_proto.NotebookMetadata) []*api_proto.NotebookCellRequest {
 	manager, err := services.GetRepositoryManager()
 	if err != nil {
 		return nil
@@ -319,12 +321,20 @@ func getDefaultCellsForSources(config_obj *config_proto.Config,
 	var result []*api_proto.NotebookCellRequest
 
 	for _, source := range sources {
+		artifact, pres := repository.Get(config_obj, source)
+		if pres {
+			notebook_metadata.ColumnTypes = append(notebook_metadata.ColumnTypes,
+				artifact.ColumnTypes...)
+		}
+
 		// Check if the artifact has custom notebook cells defined.
 		artifact_source, pres := repository.GetSource(config_obj, source)
 		if !pres {
 			continue
 		}
-		env := []*api_proto.Env{{Key: "ArtifactName", Value: source}}
+		env := []*api_proto.Env{{
+			Key: "ArtifactName", Value: source,
+		}}
 
 		// If the artifact_source defines a notebook, let it do its own thing.
 		if len(artifact_source.Notebook) > 0 {
@@ -370,7 +380,7 @@ func (self *ApiServer) NewNotebookCell(
 		return nil, errors.New("Invalid NoteboookId")
 	}
 
-	user_name := GetGRPCUserInfo(self.config, ctx).Name
+	user_name := GetGRPCUserInfo(self.config, ctx, self.ca_pool).Name
 	user_record, err := users.GetUser(self.config, user_name)
 	if err != nil {
 		return nil, err
@@ -467,7 +477,7 @@ func (self *ApiServer) UpdateNotebook(
 		return nil, errors.New("Invalid NoteboookId")
 	}
 
-	user_name := GetGRPCUserInfo(self.config, ctx).Name
+	user_name := GetGRPCUserInfo(self.config, ctx, self.ca_pool).Name
 	user_record, err := users.GetUser(self.config, user_name)
 	if err != nil {
 		return nil, err
@@ -543,7 +553,7 @@ func (self *ApiServer) GetNotebookCell(
 		return nil, errors.New("Invalid NoteboookCellId")
 	}
 
-	user_name := GetGRPCUserInfo(self.config, ctx).Name
+	user_name := GetGRPCUserInfo(self.config, ctx, self.ca_pool).Name
 	user_record, err := users.GetUser(self.config, user_name)
 	if err != nil {
 		return nil, err
@@ -611,7 +621,7 @@ func (self *ApiServer) UpdateNotebookCell(
 		return nil, errors.New("Invalid NoteboookCellId")
 	}
 
-	user_name := GetGRPCUserInfo(self.config, ctx).Name
+	user_name := GetGRPCUserInfo(self.config, ctx, self.ca_pool).Name
 	user_record, err := users.GetUser(self.config, user_name)
 	if err != nil {
 		return nil, err
@@ -802,7 +812,7 @@ func (self *ApiServer) updateNotebookCell(
 
 func (self *ApiServer) CancelNotebookCell(
 	ctx context.Context,
-	in *api_proto.NotebookCellRequest) (*empty.Empty, error) {
+	in *api_proto.NotebookCellRequest) (*emptypb.Empty, error) {
 
 	defer Instrument("CancelNotebookCell")()
 
@@ -814,7 +824,7 @@ func (self *ApiServer) CancelNotebookCell(
 		return nil, errors.New("Invalid NoteboookCellId")
 	}
 
-	user_name := GetGRPCUserInfo(self.config, ctx).Name
+	user_name := GetGRPCUserInfo(self.config, ctx, self.ca_pool).Name
 	user_record, err := users.GetUser(self.config, user_name)
 	if err != nil {
 		return nil, err
@@ -843,13 +853,15 @@ func (self *ApiServer) CancelNotebookCell(
 	}
 
 	notebook_cell.Calculating = false
+	// Make sure we write the cancel message ASAP
 	err = db.SetSubject(self.config, notebook_cell_path_manager.Path(),
 		notebook_cell)
 	if err != nil {
 		return nil, err
 	}
 
-	return &empty.Empty{}, services.GetNotifier().NotifyListener(self.config, in.CellId)
+	return &emptypb.Empty{}, services.GetNotifier().NotifyListener(
+		self.config, in.CellId, "CancelNotebookCell")
 }
 
 func (self *ApiServer) UploadNotebookAttachment(
@@ -858,7 +870,7 @@ func (self *ApiServer) UploadNotebookAttachment(
 
 	defer Instrument("UploadNotebookAttachment")()
 
-	user_name := GetGRPCUserInfo(self.config, ctx).Name
+	user_name := GetGRPCUserInfo(self.config, ctx, self.ca_pool).Name
 	user_record, err := users.GetUser(self.config, user_name)
 	if err != nil {
 		return nil, err
@@ -899,11 +911,11 @@ func (self *ApiServer) UploadNotebookAttachment(
 
 func (self *ApiServer) CreateNotebookDownloadFile(
 	ctx context.Context,
-	in *api_proto.NotebookExportRequest) (*empty.Empty, error) {
+	in *api_proto.NotebookExportRequest) (*emptypb.Empty, error) {
 
 	defer Instrument("CreateNotebookDownloadFile")()
 
-	user_name := GetGRPCUserInfo(self.config, ctx).Name
+	user_name := GetGRPCUserInfo(self.config, ctx, self.ca_pool).Name
 	user_record, err := users.GetUser(self.config, user_name)
 	if err != nil {
 		return nil, err
@@ -918,10 +930,10 @@ func (self *ApiServer) CreateNotebookDownloadFile(
 
 	switch in.Type {
 	case "zip":
-		return &empty.Empty{}, exportZipNotebook(
+		return &emptypb.Empty{}, exportZipNotebook(
 			self.config, in.NotebookId, user_record.Name)
 	default:
-		return &empty.Empty{}, exportHTMLNotebook(
+		return &emptypb.Empty{}, exportHTMLNotebook(
 			self.config, in.NotebookId, user_record.Name)
 	}
 }
@@ -1090,7 +1102,7 @@ func getAvailableDownloadFiles(config_obj *config_proto.Config,
 
 		result.Files = append(result.Files, &api_proto.AvailableDownloadFile{
 			Name:     item.Name(),
-			Type:     api.GetExtensionForFilestore(ps, ps.Type()),
+			Type:     api.GetExtensionForFilestore(ps),
 			Path:     ps.AsClientPath(),
 			Size:     uint64(item.Size()),
 			Date:     fmt.Sprintf("%v", item.ModTime()),

@@ -21,7 +21,6 @@ import (
 	"bytes"
 	"context"
 	"io/ioutil"
-	"net/http"
 	"os"
 	"sync"
 	"testing"
@@ -37,6 +36,7 @@ import (
 	"www.velocidex.com/golang/velociraptor/executor"
 	"www.velocidex.com/golang/velociraptor/logging"
 	"www.velocidex.com/golang/velociraptor/utils"
+	"www.velocidex.com/golang/velociraptor/vtesting"
 )
 
 type MockHTTPConnector struct {
@@ -48,7 +48,8 @@ type MockHTTPConnector struct {
 }
 
 func (self *MockHTTPConnector) GetCurrentUrl(handler string) string { return "http://URL/" + handler }
-func (self *MockHTTPConnector) Post(handler string, data []byte, urgent bool) (*http.Response, error) {
+func (self *MockHTTPConnector) Post(ctx context.Context,
+	name, handler string, data []byte, urgent bool) (*bytes.Buffer, error) {
 	self.mu.Lock()
 	defer self.mu.Unlock()
 
@@ -69,10 +70,7 @@ func (self *MockHTTPConnector) Post(handler string, data []byte, urgent bool) (*
 			self.received = append(self.received, item.Name)
 		})
 
-	return &http.Response{
-		Body:       ioutil.NopCloser(bytes.NewBufferString("")),
-		StatusCode: 200,
-	}, nil
+	return &bytes.Buffer{}, nil
 }
 func (self *MockHTTPConnector) ReKeyNextServer()   {}
 func (self *MockHTTPConnector) ServerName() string { return "VelociraptorServer" }
@@ -147,7 +145,9 @@ func testRingBuffer(
 
 	// The ring buffer is holding 14 bytes since none were
 	// successfully sent yet.
-	assert.Equal(t, sender.ring_buffer.AvailableBytes(), uint64(14))
+	vtesting.WaitUntil(5*time.Second, t, func() bool {
+		return sender.ring_buffer.AvailableBytes() == uint64(14)
+	})
 
 	// Turn the connector on - now sending will be successful. We
 	// need to wait for the communicator to retry sending.

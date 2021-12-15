@@ -1,4 +1,4 @@
-package flows
+package flows_test
 
 import (
 	"context"
@@ -11,8 +11,11 @@ import (
 	api_proto "www.velocidex.com/golang/velociraptor/api/proto"
 	"www.velocidex.com/golang/velociraptor/config"
 	config_proto "www.velocidex.com/golang/velociraptor/config/proto"
+	"www.velocidex.com/golang/velociraptor/datastore"
 	"www.velocidex.com/golang/velociraptor/file_store/test_utils"
+	"www.velocidex.com/golang/velociraptor/flows"
 	flows_proto "www.velocidex.com/golang/velociraptor/flows/proto"
+	"www.velocidex.com/golang/velociraptor/paths"
 	"www.velocidex.com/golang/velociraptor/services"
 	"www.velocidex.com/golang/velociraptor/services/hunt_dispatcher"
 	"www.velocidex.com/golang/velociraptor/services/journal"
@@ -95,13 +98,18 @@ sources:
 	}
 
 	acl_manager := vql_subsystem.NullACLManager{}
-	hunt_id, err := CreateHunt(self.ctx, self.config_obj, acl_manager, request)
+	hunt_id, err := flows.CreateHunt(
+		self.ctx, self.config_obj, acl_manager, request)
 
 	assert.NoError(self.T(), err)
 
-	db := test_utils.GetMemoryDataStore(self.T(), self.config_obj)
-	hunt_obj, pres := db.Subjects["/hunts/"+hunt_id+".db"].(*api_proto.Hunt)
-	assert.True(self.T(), pres)
+	db, err := datastore.GetDB(self.config_obj)
+	assert.NoError(self.T(), err)
+
+	hunt_path_manager := paths.NewHuntPathManager(hunt_id)
+	hunt_obj := &api_proto.Hunt{}
+	err = db.GetSubject(self.config_obj, hunt_path_manager.Path(), hunt_obj)
+	assert.NoError(self.T(), err)
 
 	assert.Equal(self.T(), hunt_obj.HuntDescription, request.HuntDescription)
 	assert.NotEqual(self.T(), hunt_obj.CreateTime, uint64(0))

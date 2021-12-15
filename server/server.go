@@ -31,7 +31,6 @@ import (
 	"github.com/juju/ratelimit"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
-	actions_proto "www.velocidex.com/golang/velociraptor/actions/proto"
 	config_proto "www.velocidex.com/golang/velociraptor/config/proto"
 	"www.velocidex.com/golang/velociraptor/crypto"
 	crypto_proto "www.velocidex.com/golang/velociraptor/crypto/proto"
@@ -39,7 +38,7 @@ import (
 	"www.velocidex.com/golang/velociraptor/datastore"
 	"www.velocidex.com/golang/velociraptor/flows"
 	"www.velocidex.com/golang/velociraptor/logging"
-	"www.velocidex.com/golang/velociraptor/paths"
+	"www.velocidex.com/golang/velociraptor/services"
 	"www.velocidex.com/golang/velociraptor/utils"
 )
 
@@ -59,7 +58,6 @@ type Server struct {
 	config  *config_proto.Config
 	manager *crypto_server.ServerCryptoManager
 	logger  *logging.LogContext
-	db      datastore.DataStore
 
 	// Limit concurrency for processing messages.
 	mu                  sync.Mutex
@@ -156,7 +154,9 @@ func (self *Server) ManageConcurrency(max_concurrency uint64, target_heap_size u
 
 func (self *Server) Close() {
 	close(self.done)
-	self.db.Close()
+	db, _ := datastore.GetDB(self.config)
+	db.Close()
+
 	if self.throttler != nil {
 		self.throttler.Close()
 	}
@@ -170,11 +170,6 @@ func NewServer(ctx context.Context,
 	}
 
 	manager, err := crypto_server.NewServerCryptoManager(ctx, config_obj, wg)
-	if err != nil {
-		return nil, err
-	}
-
-	db, err := datastore.GetDB(config_obj)
 	if err != nil {
 		return nil, err
 	}
@@ -197,7 +192,6 @@ func NewServer(ctx context.Context,
 	result := Server{
 		config:              config_obj,
 		manager:             manager,
-		db:                  db,
 		logger:              logging.GetLogger(config_obj, &logging.FrontendComponent),
 		concurrency_timeout: time.Duration(concurrency) * time.Second,
 		done:                make(chan bool),
@@ -278,24 +272,25 @@ func (self *Server) Process(
 		return nil, 0, err
 	}
 
-	// Record some stats about the client.
-	client_info := &actions_proto.ClientInfo{
-		Ping:      uint64(time.Now().UTC().UnixNano() / 1000),
-		IpAddress: message_info.RemoteAddr,
+	client_info_manager, err := services.GetClientInfoManager()
+	if err != nil {
+		return nil, 0, err
 	}
-
-	client_path_manager := paths.NewClientPathManager(message_info.Source)
-	err = self.db.SetSubject(
-		self.config, client_path_manager.Ping(), client_info)
+	err = client_info_manager.UpdateStats(message_info.Source,
+		func(s *services.Stats) {
+			s.Ping = uint64(time.Now().UnixNano() / 1000)
+			s.IpAddress = message_info.RemoteAddr
+		})
 	if err != nil {
 		return nil, 0, err
 	}
 
 	message_list := &crypto_proto.MessageList{}
 	if drain_requests_for_client {
-		message_list.Job = append(
-			message_list.Job,
-			self.DrainRequestsForClient(message_info.Source)...)
+		tasks, err := client_info_manager.GetClientTasks(message_info.Source)
+		if err == nil {
+			message_list.Job = append(message_list.Job, tasks...)
+		}
 	}
 
 	/*
@@ -315,15 +310,6 @@ func (self *Server) Process(
 	}
 
 	return response, len(message_list.Job), nil
-}
-
-func (self *Server) DrainRequestsForClient(client_id string) []*crypto_proto.VeloMessage {
-	result, err := self.db.GetClientTasks(self.config, client_id, false)
-	if err == nil {
-		return result
-	}
-
-	return []*crypto_proto.VeloMessage{}
 }
 
 // Fatal error - terminate immediately.

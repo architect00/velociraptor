@@ -20,20 +20,22 @@ package datastore
 
 import (
 	"errors"
-	"strings"
 	"sync"
 	"time"
 
 	"google.golang.org/protobuf/proto"
 	config_proto "www.velocidex.com/golang/velociraptor/config/proto"
-	crypto_proto "www.velocidex.com/golang/velociraptor/crypto/proto"
 	"www.velocidex.com/golang/velociraptor/file_store/api"
 )
 
 var (
-	mu sync.Mutex
-
 	StopIteration = errors.New("StopIteration")
+
+	// Cache the datastore implementations. The datastore is
+	// essentially a singleton determined by the configuration at
+	// start time.
+	ds_mu  sync.Mutex
+	g_impl DataStore
 )
 
 type SortingSense int
@@ -52,23 +54,14 @@ type DatastoreInfo struct {
 // When WalkFunc return StopIteration we exit the walk.
 type WalkFunc func(urn api.DSPathSpec) error
 
+// Raw level access only used internally rarely.
+type RawDataStore interface {
+	GetBuffer(config_obj *config_proto.Config, urn api.DSPathSpec) ([]byte, error)
+	SetBuffer(config_obj *config_proto.Config, urn api.DSPathSpec,
+		data []byte, completion func()) error
+}
+
 type DataStore interface {
-	// Retrieve all the client's tasks.
-	GetClientTasks(
-		config_obj *config_proto.Config,
-		client_id string,
-		do_not_lease bool) ([]*crypto_proto.VeloMessage, error)
-
-	UnQueueMessageForClient(
-		config_obj *config_proto.Config,
-		client_id string,
-		message *crypto_proto.VeloMessage) error
-
-	QueueMessageForClient(
-		config_obj *config_proto.Config,
-		client_id string,
-		message *crypto_proto.VeloMessage) error
-
 	// Reads a stored message from the datastore. If there is no
 	// stored message at this URN, the function returns an
 	// os.ErrNotExist error.
@@ -77,11 +70,25 @@ type DataStore interface {
 		urn api.DSPathSpec,
 		message proto.Message) error
 
+	// SetSubject writes the data to the datastore synchronously. The
+	// data is written synchronously and when complete will be visible
+	// to other nodes as long as the data is not in their caches.
 	SetSubject(
 		config_obj *config_proto.Config,
 		urn api.DSPathSpec,
 		message proto.Message) error
 
+	// Writes the data asynchronously and fires the completion
+	// callback when the data hits the disk and will become visibile
+	// to other nodes this may be a long time in the future.
+	SetSubjectWithCompletion(
+		config_obj *config_proto.Config,
+		urn api.DSPathSpec,
+		message proto.Message,
+		completion func()) error
+
+	// DeleteSubject will asynchronously remove the item from the data
+	// store.
 	DeleteSubject(
 		config_obj *config_proto.Config,
 		urn api.DSPathSpec) error
@@ -91,69 +98,72 @@ type DataStore interface {
 		config_obj *config_proto.Config,
 		urn api.DSPathSpec) ([]api.DSPathSpec, error)
 
-	Walk(config_obj *config_proto.Config,
-		root api.DSPathSpec, walkFn WalkFunc) error
-
-	// Update the posting list index. Searching for any of the
-	// keywords will return the entity urn.
-	SetIndex(
-		config_obj *config_proto.Config,
-		index_urn api.DSPathSpec,
-		entity string,
-		keywords []string) error
-
-	UnsetIndex(
-		config_obj *config_proto.Config,
-		index_urn api.DSPathSpec,
-		entity string,
-		keywords []string) error
-
-	CheckIndex(
-		config_obj *config_proto.Config,
-		index_urn api.DSPathSpec,
-		entity string,
-		keywords []string) error
-
-	SearchClients(
-		config_obj *config_proto.Config,
-		index_urn api.DSPathSpec,
-		query string, query_type string,
-		offset uint64, limit uint64, sort SortingSense) []string
+	Debug(config_obj *config_proto.Config)
 
 	// Called to close all db handles etc. Not thread safe.
 	Close()
 }
 
 func GetDB(config_obj *config_proto.Config) (DataStore, error) {
+	ds_mu.Lock()
+	defer ds_mu.Unlock()
+
+	if g_impl != nil {
+		return g_impl, nil
+	}
+
 	if config_obj.Datastore == nil {
 		return nil, errors.New("no datastore configured")
 	}
 
-	switch config_obj.Datastore.Implementation {
-	case "FileBaseDataStore":
-		if config_obj.Datastore.Location == "" {
-			return nil, errors.New(
-				"No Datastore_location is set in the config.")
-		}
+	return getImpl(config_obj.Datastore.Implementation, config_obj)
+}
 
+func getImpl(implementation string,
+	config_obj *config_proto.Config) (DataStore, error) {
+	switch implementation {
+	case "FileBaseDataStore":
 		return file_based_imp, nil
 
-	case "Test":
-		mu.Lock()
-		defer mu.Unlock()
-
-		// Sanitize the FilestoreDirectory parameter so we
-		// have a consistent filename in the test datastore.
-		if config_obj.Datastore.Location != "" {
-			config_obj.Datastore.Location = strings.TrimSuffix(
-				config_obj.Datastore.Location, "/")
-			config_obj.Datastore.Location = strings.TrimSuffix(
-				config_obj.Datastore.Location, "\\")
+	case "ReadOnlyDataStore":
+		if read_only_imp == nil {
+			read_only_imp = NewReadOnlyDataStore()
 		}
-		return gTestDatastore, nil
+		return read_only_imp, nil
+
+	case "RemoteFileDataStore":
+		return remote_datastopre_imp, nil
+
+	case "Memcache":
+		if memcache_imp == nil {
+			memcache_imp = NewMemcacheDataStore()
+		}
+		return memcache_imp, nil
+
+	case "MemcacheFileDataStore":
+		if memcache_file_imp == nil {
+			memcache_file_imp = NewMemcacheFileDataStore()
+		}
+		return memcache_file_imp, nil
+
+	case "Test":
+		if memcache_imp == nil {
+			memcache_imp = NewMemcacheDataStore()
+		}
+		return memcache_imp, nil
 
 	default:
 		return nil, errors.New("no datastore implementation " +
 			config_obj.Datastore.Implementation)
 	}
+}
+
+func SetGlobalDatastore(
+	implementation string,
+	config_obj *config_proto.Config) (err error) {
+	ds_mu.Lock()
+	defer ds_mu.Unlock()
+
+	g_impl, err = getImpl(implementation, config_obj)
+	return err
 }

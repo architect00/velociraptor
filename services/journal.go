@@ -56,12 +56,23 @@ type JournalService interface {
 	Watch(ctx context.Context,
 		queue_name string) (output <-chan *ordereddict.Dict, cancel func())
 
+	GetWatchers() []string
+
 	// Push the rows into the result set in the filestore. NOTE: This
 	// method synchronises access to the files within the process.
 	AppendToResultSet(config_obj *config_proto.Config,
 		path api.FSPathSpec, rows []*ordereddict.Dict) error
 
+	Broadcast(config_obj *config_proto.Config,
+		rows []*ordereddict.Dict, name, client_id, flows_id string) error
+
 	// Push the rows to the event artifact queue
 	PushRowsToArtifact(config_obj *config_proto.Config,
 		rows []*ordereddict.Dict, name, client_id, flows_id string) error
+
+	// Push the rows to the event artifact queue with a potential
+	// unspecified delay. Internally these rows will be batched until
+	// a convenient time to send them.
+	PushRowsToArtifactAsync(config_obj *config_proto.Config,
+		row *ordereddict.Dict, name string)
 }

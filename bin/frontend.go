@@ -69,7 +69,7 @@ func doFrontend() {
 	defer sm.Close()
 
 	server, err := startFrontend(sm)
-	kingpin.FatalIfError(err, "startFrontend %+vv", err)
+	kingpin.FatalIfError(err, "startFrontend %+v", err)
 	defer server.Close()
 
 	sm.Wg.Wait()
@@ -97,10 +97,13 @@ func startFrontend(sm *services.Service) (*api.Builder, error) {
 	// Increase resource limits.
 	server.IncreaseLimits(config_obj)
 
-	// Start the frontend service if needed. This must happen
-	// first so other services can contact the master node.
+	// Minions use the RemoteFileDataStore to sync with the server.
+	if !services.IsMaster(config_obj) {
+		logger.Info("Frontend will run as a <green>minion</>.")
+		logger.Info("<green>Enabling remote datastore</> since we are a minion.")
+		config_obj.Datastore.Implementation = "RemoteFileDataStore"
+	}
 
-	config_obj.Frontend.IsMaster = !*frontend_cmd_minion
 	err := sm.Start(frontend.StartFrontendService)
 	if err != nil {
 		return nil, err
@@ -112,14 +115,23 @@ func startFrontend(sm *services.Service) (*api.Builder, error) {
 		return nil, err
 	}
 
-	// These services must start only on the frontends.
-	err = startup.StartupFrontendServices(sm)
+	// Parse extra artifacts from --definitions flag before we start
+	// any services just in case these services need to access these
+	// custom artifacts.
+	_, err = getRepository(config_obj)
 	if err != nil {
 		return nil, err
 	}
 
-	// Parse the artifacts database to detect errors early.
-	_, err = getRepository(config_obj)
+	// Load any artifacts defined in the config file before the
+	// frontend services are started so they may use them.
+	err = load_config_artifacts(config_obj)
+	if err != nil {
+		return nil, err
+	}
+
+	// These services must start only on the frontends.
+	err = startup.StartupFrontendServices(sm)
 	if err != nil {
 		return nil, err
 	}

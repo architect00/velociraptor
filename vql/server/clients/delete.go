@@ -63,7 +63,7 @@ func (self DeleteClientPlugin) Call(ctx context.Context,
 		client_path_manager := paths.NewClientPathManager(arg.ClientId)
 
 		// Indiscriminately delete all the client's datastore files.
-		err = db.Walk(config_obj, client_path_manager.Path(),
+		err = datastore.Walk(config_obj, db, client_path_manager.Path(),
 			func(filename api.DSPathSpec) error {
 				select {
 				case <-ctx.Done():
@@ -78,8 +78,9 @@ func (self DeleteClientPlugin) Call(ctx context.Context,
 
 				if arg.ReallyDoIt {
 					err = db.DeleteSubject(config_obj, filename)
-					if err != nil {
-						return err
+					if err != nil && os.IsExist(err) {
+						scope.Log("client_delete: while deleting %v: %s",
+							filename, err)
 					}
 				}
 				return nil
@@ -100,7 +101,7 @@ func (self DeleteClientPlugin) Call(ctx context.Context,
 		}
 
 		// Delete the filestore files.
-		err = file_store_factory.Walk(
+		err = api.Walk(file_store_factory,
 			client_path_manager.Path().AsFilestorePath(),
 			func(filename api.FSPathSpec, info os.FileInfo) error {
 				select {
@@ -117,7 +118,8 @@ func (self DeleteClientPlugin) Call(ctx context.Context,
 				if arg.ReallyDoIt {
 					err := file_store_factory.Delete(filename)
 					if err != nil {
-						scope.Log("client_delete: %s", err)
+						scope.Log("client_delete: while deleting %v: %s",
+							filename, err)
 					}
 				}
 				return nil
@@ -131,7 +133,8 @@ func (self DeleteClientPlugin) Call(ctx context.Context,
 		// it is already up.
 		notifier := services.GetNotifier()
 		if notifier != nil {
-			err = notifier.NotifyListener(config_obj, arg.ClientId)
+			err = notifier.NotifyListener(
+				config_obj, arg.ClientId, "DeleteClient")
 			if err != nil {
 				scope.Log("client_delete: %s", err)
 			}
@@ -145,15 +148,15 @@ func reallyDeleteClient(ctx context.Context,
 	config_obj *config_proto.Config, scope vfilter.Scope,
 	db datastore.DataStore, arg *DeleteClientArgs) error {
 
-	client_info, err := search.GetApiClient(ctx,
-		config_obj, arg.ClientId, false /* detailed */)
+	client_info, err := search.FastGetApiClient(ctx,
+		config_obj, arg.ClientId)
 	if err != nil {
 		return err
 	}
 
 	client_path_manager := paths.NewClientPathManager(arg.ClientId)
 	err = db.DeleteSubject(config_obj, client_path_manager.Path())
-	if err != nil {
+	if err != nil && os.IsExist(err) {
 		return err
 	}
 
@@ -161,7 +164,7 @@ func reallyDeleteClient(ctx context.Context,
 	labeler := services.GetLabeler()
 	for _, label := range labeler.GetClientLabels(config_obj, arg.ClientId) {
 		err := labeler.RemoveClientLabel(config_obj, arg.ClientId, label)
-		if err != nil {
+		if err != nil && os.IsExist(err) {
 			return err
 		}
 	}
@@ -170,13 +173,14 @@ func reallyDeleteClient(ctx context.Context,
 	// interrogation service.
 	keywords := []string{"all", client_info.ClientId}
 	if client_info.OsInfo != nil && client_info.OsInfo.Fqdn != "" {
-		keywords = append(keywords, client_info.OsInfo.Fqdn)
+		keywords = append(keywords, "host:"+client_info.OsInfo.Hostname)
 		keywords = append(keywords, "host:"+client_info.OsInfo.Fqdn)
 	}
-	err = db.UnsetIndex(config_obj, paths.CLIENT_INDEX_URN,
-		arg.ClientId, keywords)
-	if err != nil {
-		return err
+	for _, keyword := range keywords {
+		err = search.UnsetIndex(config_obj, arg.ClientId, keyword)
+		if err != nil && os.IsExist(err) {
+			return err
+		}
 	}
 
 	// Send an event that the client was deleted.

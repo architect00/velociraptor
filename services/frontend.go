@@ -6,6 +6,7 @@ import (
 	"sync"
 
 	api_proto "www.velocidex.com/golang/velociraptor/api/proto"
+	config_proto "www.velocidex.com/golang/velociraptor/config/proto"
 )
 
 // The frontend service manages load balancing between multiple
@@ -35,7 +36,7 @@ func GetFrontendManager() FrontendManager {
 }
 
 type FrontendManager interface {
-	IsMaster() bool
+	GetMinionCount() int
 
 	// Establish a gRPC connection to the master node. If we are
 	// running on the master node already then returns a
@@ -43,4 +44,12 @@ type FrontendManager interface {
 	// error.
 	GetMasterAPIClient(ctx context.Context) (
 		api_proto.APIClient, func() error, error)
+}
+
+// Are we running on the master node?
+func IsMaster(config_obj *config_proto.Config) bool {
+	if config_obj.Frontend != nil {
+		return !config_obj.Frontend.IsMinion
+	}
+	return true
 }

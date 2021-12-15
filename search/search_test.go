@@ -18,10 +18,10 @@ func (self *TestSuite) TestWildCardSearch() {
 	// Read all clients.
 	results := ordereddict.NewDict()
 	for _, search_term := range []string{
-		"C.023030003030*2",
-		"*.023030003030*2",
-		"*30003030*2",
-		"C.02303*2",
+		"client:C.023030003030*2",
+		"client:*.023030003030*2",
+		"client:*30003030*2",
+		"client:C.02303*2",
 	} {
 		ctx := context.Background()
 		scope := vql_subsystem.MakeScope()
@@ -45,14 +45,12 @@ func (self *TestSuite) TestWildCardSearch() {
 func (self *TestSuite) TestPrefixSearch() {
 	self.populatedClients()
 
-	initial_op_count := getIndexListings(self.T())
-
 	// Read all clients.
 	prefix := "C.0230300330"
 	ctx := context.Background()
 	searched_clients := []string{}
 	for hit := range search.SearchIndexWithPrefix(
-		ctx, self.ConfigObj, prefix, search.OPTION_ENTITY) {
+		ctx, self.ConfigObj, prefix, search.OPTION_CLIENT_RECORDS) {
 		if hit != nil {
 			client_id := hit.Entity
 			searched_clients = append(searched_clients, client_id)
@@ -66,7 +64,4 @@ func (self *TestSuite) TestPrefixSearch() {
 		}
 	}
 	assert.Equal(self.T(), prefixed_clients, searched_clients)
-
-	current_op_count := getIndexListings(self.T())
-	assert.Equal(self.T(), uint64(34), current_op_count-initial_op_count)
 }

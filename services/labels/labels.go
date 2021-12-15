@@ -6,6 +6,9 @@ import (
 	"sync"
 
 	"github.com/Velocidex/ordereddict"
+	"github.com/Velocidex/ttlcache/v2"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
 	api_proto "www.velocidex.com/golang/velociraptor/api/proto"
 	config_proto "www.velocidex.com/golang/velociraptor/config/proto"
 	"www.velocidex.com/golang/velociraptor/datastore"
@@ -13,8 +16,15 @@ import (
 	"www.velocidex.com/golang/velociraptor/paths"
 	"www.velocidex.com/golang/velociraptor/search"
 	"www.velocidex.com/golang/velociraptor/services"
-	"www.velocidex.com/golang/velociraptor/third_party/cache"
 	"www.velocidex.com/golang/velociraptor/utils"
+)
+
+var (
+	metricLabelLRU = promauto.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "labeler_lru_total",
+			Help: "Total labels cached",
+		})
 )
 
 // When not running on the frontend we set a dummy labeler.
@@ -62,7 +72,7 @@ func (self CachedLabels) Size() int {
 
 type Labeler struct {
 	mu  sync.Mutex
-	lru *cache.LRUCache
+	lru *ttlcache.Cache
 
 	Clock utils.Clock
 }
@@ -74,49 +84,17 @@ func (self *Labeler) SetClock(c utils.Clock) {
 	self.Clock = c
 }
 
-// If an explicit record does not exist, we retrieve it from searching the index.
-func (self *Labeler) getRecordFromIndex(
-	config_obj *config_proto.Config, client_id string) (*CachedLabels, error) {
-	db, err := datastore.GetDB(config_obj)
-	if err != nil {
-		return nil, err
-	}
-
-	result := &CachedLabels{
-		record: &api_proto.ClientLabels{
-			// We treat index timestamps as 0 since they
-			// are legacy - new labeling operations should
-			// advance this.
-			Timestamp: 0,
-		},
-	}
-
-	for _, label := range db.SearchClients(
-		config_obj, paths.CLIENT_INDEX_URN,
-		client_id, "", 0, 1000, datastore.UNSORTED) {
-		if strings.HasPrefix(label, "label:") {
-			result.record.Label = append(result.record.Label,
-				strings.TrimPrefix(label, "label:"))
-		}
-	}
-
-	// Set the record for next time.
-	client_path_manager := paths.NewClientPathManager(client_id)
-	err = db.SetSubject(config_obj,
-		client_path_manager.Labels(), result.record)
-	if err != nil {
-		return nil, err
-	}
-
-	return result, nil
-}
-
+// Assumption: We hold the lock entering this function.
 func (self *Labeler) getRecord(
 	config_obj *config_proto.Config, client_id string) (*CachedLabels, error) {
-	cached_any, ok := self.lru.Get(client_id)
-	if ok {
+	cached_any, err := self.lru.Get(client_id)
+	if err == nil {
 		return cached_any.(*CachedLabels), nil
 	}
+
+	// We did not hit the lru - fetch from the datastore but we dont
+	// need to hold the lock for that.
+	self.mu.Unlock()
 
 	db, err := datastore.GetDB(config_obj)
 	if err != nil {
@@ -128,23 +106,22 @@ func (self *Labeler) getRecord(
 	err = db.GetSubject(config_obj,
 		client_path_manager.Labels(), cached.record)
 
-	// If there is no record, calculate a new record from the
-	// client index.
-	if err != nil || cached.record.Timestamp == 0 {
-		cached, err = self.getRecordFromIndex(config_obj, client_id)
-		if err != nil {
-			return nil, err
-		}
-	}
+	// In ancient versions we used to store labels in the client index
+	// instead of a dedicated record. This used to be migration code
+	// that populated labels from the index, but this is not necessary
+	// since the labels client record is the authoritative source.
+	preCalculatedLowCase(cached)
 
-	self.preCalculatedLowCase(cached)
-
+	// Now set back to the lru with lock
+	self.mu.Lock()
 	self.lru.Set(client_id, cached)
 
 	return cached, nil
 }
 
-func (self *Labeler) preCalculatedLowCase(cached *CachedLabels) {
+// Reset internal lower cased labels from the full labels. (Lower
+// cased labels are used for quick label comparisons).
+func preCalculatedLowCase(cached *CachedLabels) {
 	cached.lower_labels = nil
 	for _, label := range cached.record.Label {
 		cached.lower_labels = append(cached.lower_labels,
@@ -202,13 +179,13 @@ func (self *Labeler) notifyClient(
 		return err
 	}
 
-	return journal.PushRowsToArtifact(config_obj,
-		[]*ordereddict.Dict{
-			ordereddict.NewDict().
-				Set("client_id", client_id).
-				Set("Operation", operation).
-				Set("Label", new_label),
-		}, "Server.Internal.Label", client_id, "")
+	journal.PushRowsToArtifactAsync(config_obj,
+		ordereddict.NewDict().
+			Set("client_id", client_id).
+			Set("Operation", operation).
+			Set("Label", new_label),
+		"Server.Internal.Label")
+	return nil
 }
 
 func (self *Labeler) SetClientLabel(
@@ -238,8 +215,8 @@ func (self *Labeler) SetClientLabel(
 	}
 
 	client_path_manager := paths.NewClientPathManager(client_id)
-	err = db.SetSubject(config_obj,
-		client_path_manager.Labels(), cached.record)
+	err = db.SetSubjectWithCompletion(config_obj,
+		client_path_manager.Labels(), cached.record, nil)
 	if err != nil {
 		return err
 	}
@@ -278,7 +255,7 @@ func (self *Labeler) RemoveClientLabel(
 	cached.record.Timestamp = uint64(self.Clock.Now().UnixNano())
 	cached.record.Label = new_labels
 
-	self.preCalculatedLowCase(cached)
+	preCalculatedLowCase(cached)
 
 	// Store the label in the datastore.
 	db, err := datastore.GetDB(config_obj)
@@ -287,8 +264,8 @@ func (self *Labeler) RemoveClientLabel(
 	}
 
 	client_path_manager := paths.NewClientPathManager(client_id)
-	err = db.SetSubject(config_obj,
-		client_path_manager.Labels(), cached.record)
+	err = db.SetSubjectWithCompletion(config_obj,
+		client_path_manager.Labels(), cached.record, nil)
 	if err != nil {
 		return err
 	}
@@ -331,7 +308,7 @@ func (self *Labeler) ProcessRow(
 
 	client_id, pres := row.GetString("client_id")
 	if pres {
-		self.lru.Delete(client_id)
+		self.lru.Remove(client_id)
 	}
 	return nil
 }
@@ -344,7 +321,15 @@ func (self *Labeler) Start(ctx context.Context,
 		expected_clients = config_obj.Frontend.Resources.ExpectedClients
 	}
 
-	self.lru = cache.NewLRUCache(expected_clients)
+	self.lru = ttlcache.NewCache()
+	self.lru.SetCacheSizeLimit(int(expected_clients))
+	self.lru.SetNewItemCallback(func(key string, value interface{}) {
+		metricLabelLRU.Inc()
+	})
+	self.lru.SetExpirationCallback(func(key string, value interface{}) {
+		metricLabelLRU.Dec()
+	})
+
 	journal, err := services.GetJournal()
 	if err != nil {
 		return err

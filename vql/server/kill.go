@@ -15,7 +15,6 @@ import (
 	"www.velocidex.com/golang/velociraptor/acls"
 	"www.velocidex.com/golang/velociraptor/constants"
 	crypto_proto "www.velocidex.com/golang/velociraptor/crypto/proto"
-	"www.velocidex.com/golang/velociraptor/datastore"
 	"www.velocidex.com/golang/velociraptor/services"
 	vql_subsystem "www.velocidex.com/golang/velociraptor/vql"
 	"www.velocidex.com/golang/vfilter"
@@ -45,31 +44,18 @@ func (self *KillClientFunction) Call(ctx context.Context,
 		return vfilter.Null{}
 	}
 
-	config_obj, ok := vql_subsystem.GetServerConfig(scope)
-	if !ok {
-		scope.Log("Command can only run on the server")
-		return vfilter.Null{}
-	}
-
-	db, err := datastore.GetDB(config_obj)
+	// Queue a cancellation message to the client for this flow
+	// id.
+	client_manager, err := services.GetClientInfoManager()
 	if err != nil {
 		scope.Log("killkillkill: %s", err.Error())
 		return vfilter.Null{}
 	}
-
-	// Queue a cancellation message to the client for this flow
-	// id.
-	err = db.QueueMessageForClient(config_obj, arg.ClientId,
+	err = client_manager.QueueMessageForClient(arg.ClientId,
 		&crypto_proto.VeloMessage{
 			KillKillKill: &crypto_proto.Cancel{},
 			SessionId:    constants.MONITORING_WELL_KNOWN_FLOW,
-		})
-	if err != nil {
-		scope.Log("killkillkill: %s", err.Error())
-		return vfilter.Null{}
-	}
-
-	err = services.GetNotifier().NotifyListener(config_obj, arg.ClientId)
+		}, true, nil)
 	if err != nil {
 		scope.Log("killkillkill: %s", err.Error())
 		return vfilter.Null{}

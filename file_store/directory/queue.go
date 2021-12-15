@@ -28,10 +28,7 @@ package directory
 import (
 	"context"
 	"fmt"
-	"io/ioutil"
-	"os"
 	"sync"
-	"time"
 
 	"github.com/Velocidex/ordereddict"
 	config_proto "www.velocidex.com/golang/velociraptor/config/proto"
@@ -40,133 +37,8 @@ import (
 	"www.velocidex.com/golang/velociraptor/utils"
 )
 
-// A listener wraps a channel that our client will listen on. We send
-// the message to each listener that is subscribed to the queue.
-type Listener struct {
-	id uint64
-
-	// The consumer interested in these events. The consumer may
-	// block arbitrarily.
-	output chan *ordereddict.Dict
-
-	// A backup file to store extra messages.
-	file_buffer *FileBasedRingBuffer
-
-	// Name of the file_buffer
-	tmpfile string
-
-	// The context of the creator of this listener - When it is
-	// done we drop messages to it.
-	ctx context.Context
-}
-
-// Should not block - very fast.
-func (self *Listener) Send(item *ordereddict.Dict) {
-	select {
-	case <-self.ctx.Done():
-		return
-
-		// If we can immediately push to the output, do so
-	case self.output <- item:
-
-		// Otherwise push to the file.
-	default:
-		self.file_buffer.Enqueue(item)
-	}
-}
-
-// Flush the file buffer into the output channel.
-func (self *Listener) FlushFile() {
-	// Immediately drain the file.
-	for {
-		items := self.file_buffer.Lease(100)
-		if len(items) == 0 {
-			return
-		}
-		for _, item := range items {
-			select {
-			case <-self.ctx.Done():
-				// We still need to release this item from the wg.
-				self.file_buffer.Wg.Done()
-
-			case self.output <- item:
-				self.file_buffer.Wg.Done()
-			}
-		}
-	}
-}
-
-func (self *Listener) Output() chan *ordereddict.Dict {
-	return self.output
-}
-
-func (self *Listener) Close() {
-	self.FlushFile()
-
-	// Wait for all outstanding file buffer messages to be sent.
-	self.file_buffer.Wg.Wait()
-	self.file_buffer.Close()
-
-	close(self.output)
-
-	os.Remove(self.tmpfile) // clean up file buffer
-}
-
-func (self *Listener) Debug() *ordereddict.Dict {
-	result := ordereddict.NewDict().Set("BackingFile", self.tmpfile)
-	st, _ := os.Stat(self.tmpfile)
-	result.Set("Size", int64(st.Size()))
-
-	return result
-}
-
-func NewListener(
-	config_obj *config_proto.Config, ctx context.Context) (*Listener, error) {
-
-	tmpfile, err := ioutil.TempFile("", "journal")
-	if err != nil {
-		return nil, err
-	}
-
-	file_buffer, err := NewFileBasedRingBuffer(config_obj, tmpfile)
-	if err != nil {
-		return nil, err
-	}
-
-	self := &Listener{
-		id:          utils.GetId(),
-		ctx:         ctx,
-		output:      make(chan *ordereddict.Dict),
-		file_buffer: file_buffer,
-		tmpfile:     tmpfile.Name(),
-	}
-
-	// Pump messages from the file_buffer to our listeners
-	// periodically.
-	go func() {
-		for {
-			// Wait here until the file has some data in it.
-			select {
-			case <-ctx.Done():
-				return
-
-			case <-time.After(time.Second):
-				// Get some messages from the file.
-				items := self.file_buffer.Lease(100)
-				for _, item := range items {
-					select {
-					case <-ctx.Done():
-						self.file_buffer.Wg.Done()
-
-					case self.output <- item:
-						self.file_buffer.Wg.Done()
-					}
-				}
-			}
-		}
-	}()
-
-	return self, nil
+type QueueOptions struct {
+	DisableFileBuffering bool
 }
 
 // A Queue manages a set of registrations at a specific queue name
@@ -179,15 +51,28 @@ type QueuePool struct {
 	registrations map[string][]*Listener
 }
 
+func (self *QueuePool) GetWatchers() []string {
+	self.mu.Lock()
+	defer self.mu.Unlock()
+
+	result := make([]string, 0, len(self.registrations))
+	for name := range self.registrations {
+		result = append(result, name)
+	}
+
+	return result
+}
+
 func (self *QueuePool) Register(
-	ctx context.Context, vfs_path string) (<-chan *ordereddict.Dict, func()) {
+	ctx context.Context, vfs_path string,
+	options QueueOptions) (<-chan *ordereddict.Dict, func()) {
 	self.mu.Lock()
 	defer self.mu.Unlock()
 
 	registrations := self.registrations[vfs_path]
 
 	subctx, cancel := context.WithCancel(ctx)
-	new_registration, err := NewListener(self.config_obj, subctx)
+	new_registration, err := NewListener(self.config_obj, subctx, vfs_path, options)
 	if err != nil {
 		cancel()
 		output_chan := make(chan *ordereddict.Dict)
@@ -289,6 +174,16 @@ func (self *DirectoryQueueManager) Debug() *ordereddict.Dict {
 	return self.queue_pool.Debug()
 }
 
+// Sends the events without writing them to the filestore.
+func (self *DirectoryQueueManager) Broadcast(
+	path_manager api.PathManager, dict_rows []*ordereddict.Dict) {
+	for _, row := range dict_rows {
+		// Set a timestamp per event for easier querying.
+		row.Set("_ts", int(self.Clock.Now().Unix()))
+		self.queue_pool.Broadcast(path_manager.GetQueueName(), row)
+	}
+}
+
 func (self *DirectoryQueueManager) PushEventRows(
 	path_manager api.PathManager, dict_rows []*ordereddict.Dict) error {
 
@@ -308,6 +203,10 @@ func (self *DirectoryQueueManager) PushEventRows(
 	return nil
 }
 
+func (self *DirectoryQueueManager) GetWatchers() []string {
+	return self.queue_pool.GetWatchers()
+}
+
 func (self *DirectoryQueueManager) Watch(ctx context.Context,
 	queue_name string) (<-chan *ordereddict.Dict, func()) {
 
@@ -316,7 +215,8 @@ func (self *DirectoryQueueManager) Watch(ctx context.Context,
 	// current queue listener and cause any outstanding events to be
 	// dropped on the floor.
 	subctx, cancel := context.WithCancel(ctx)
-	output_chan, pool_cancel := self.queue_pool.Register(subctx, queue_name)
+	output_chan, pool_cancel := self.queue_pool.Register(
+		subctx, queue_name, QueueOptions{})
 	return output_chan, func() {
 		cancel()
 		pool_cancel()

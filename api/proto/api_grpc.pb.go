@@ -102,6 +102,13 @@ type APIClient interface {
 	PushEvents(ctx context.Context, in *PushEventRequest, opts ...grpc.CallOption) (*empty.Empty, error)
 	// Push monitoring event to the server.
 	WriteEvent(ctx context.Context, in *proto2.VQLResponse, opts ...grpc.CallOption) (*empty.Empty, error)
+	// Remote data store access.
+	GetSubject(ctx context.Context, in *DataRequest, opts ...grpc.CallOption) (*DataResponse, error)
+	SetSubject(ctx context.Context, in *DataRequest, opts ...grpc.CallOption) (*DataResponse, error)
+	DeleteSubject(ctx context.Context, in *DataRequest, opts ...grpc.CallOption) (*empty.Empty, error)
+	ListChildren(ctx context.Context, in *DataRequest, opts ...grpc.CallOption) (*ListChildrenResponse, error)
+	// Health check protocol as in https://github.com/grpc/grpc/blob/master/doc/health-checking.md
+	Check(ctx context.Context, in *HealthCheckRequest, opts ...grpc.CallOption) (*HealthCheckResponse, error)
 }
 
 type aPIClient struct {
@@ -662,6 +669,51 @@ func (c *aPIClient) WriteEvent(ctx context.Context, in *proto2.VQLResponse, opts
 	return out, nil
 }
 
+func (c *aPIClient) GetSubject(ctx context.Context, in *DataRequest, opts ...grpc.CallOption) (*DataResponse, error) {
+	out := new(DataResponse)
+	err := c.cc.Invoke(ctx, "/proto.API/GetSubject", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *aPIClient) SetSubject(ctx context.Context, in *DataRequest, opts ...grpc.CallOption) (*DataResponse, error) {
+	out := new(DataResponse)
+	err := c.cc.Invoke(ctx, "/proto.API/SetSubject", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *aPIClient) DeleteSubject(ctx context.Context, in *DataRequest, opts ...grpc.CallOption) (*empty.Empty, error) {
+	out := new(empty.Empty)
+	err := c.cc.Invoke(ctx, "/proto.API/DeleteSubject", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *aPIClient) ListChildren(ctx context.Context, in *DataRequest, opts ...grpc.CallOption) (*ListChildrenResponse, error) {
+	out := new(ListChildrenResponse)
+	err := c.cc.Invoke(ctx, "/proto.API/ListChildren", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *aPIClient) Check(ctx context.Context, in *HealthCheckRequest, opts ...grpc.CallOption) (*HealthCheckResponse, error) {
+	out := new(HealthCheckResponse)
+	err := c.cc.Invoke(ctx, "/proto.API/Check", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // APIServer is the server API for API service.
 // All implementations must embed UnimplementedAPIServer
 // for forward compatibility
@@ -746,6 +798,13 @@ type APIServer interface {
 	PushEvents(context.Context, *PushEventRequest) (*empty.Empty, error)
 	// Push monitoring event to the server.
 	WriteEvent(context.Context, *proto2.VQLResponse) (*empty.Empty, error)
+	// Remote data store access.
+	GetSubject(context.Context, *DataRequest) (*DataResponse, error)
+	SetSubject(context.Context, *DataRequest) (*DataResponse, error)
+	DeleteSubject(context.Context, *DataRequest) (*empty.Empty, error)
+	ListChildren(context.Context, *DataRequest) (*ListChildrenResponse, error)
+	// Health check protocol as in https://github.com/grpc/grpc/blob/master/doc/health-checking.md
+	Check(context.Context, *HealthCheckRequest) (*HealthCheckResponse, error)
 	mustEmbedUnimplementedAPIServer()
 }
 
@@ -920,6 +979,21 @@ func (UnimplementedAPIServer) PushEvents(context.Context, *PushEventRequest) (*e
 }
 func (UnimplementedAPIServer) WriteEvent(context.Context, *proto2.VQLResponse) (*empty.Empty, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method WriteEvent not implemented")
+}
+func (UnimplementedAPIServer) GetSubject(context.Context, *DataRequest) (*DataResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetSubject not implemented")
+}
+func (UnimplementedAPIServer) SetSubject(context.Context, *DataRequest) (*DataResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method SetSubject not implemented")
+}
+func (UnimplementedAPIServer) DeleteSubject(context.Context, *DataRequest) (*empty.Empty, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method DeleteSubject not implemented")
+}
+func (UnimplementedAPIServer) ListChildren(context.Context, *DataRequest) (*ListChildrenResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ListChildren not implemented")
+}
+func (UnimplementedAPIServer) Check(context.Context, *HealthCheckRequest) (*HealthCheckResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method Check not implemented")
 }
 func (UnimplementedAPIServer) mustEmbedUnimplementedAPIServer() {}
 
@@ -1948,6 +2022,96 @@ func _API_WriteEvent_Handler(srv interface{}, ctx context.Context, dec func(inte
 	return interceptor(ctx, in, info, handler)
 }
 
+func _API_GetSubject_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DataRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(APIServer).GetSubject(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/proto.API/GetSubject",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(APIServer).GetSubject(ctx, req.(*DataRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _API_SetSubject_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DataRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(APIServer).SetSubject(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/proto.API/SetSubject",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(APIServer).SetSubject(ctx, req.(*DataRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _API_DeleteSubject_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DataRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(APIServer).DeleteSubject(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/proto.API/DeleteSubject",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(APIServer).DeleteSubject(ctx, req.(*DataRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _API_ListChildren_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DataRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(APIServer).ListChildren(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/proto.API/ListChildren",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(APIServer).ListChildren(ctx, req.(*DataRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _API_Check_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(HealthCheckRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(APIServer).Check(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/proto.API/Check",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(APIServer).Check(ctx, req.(*HealthCheckRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // API_ServiceDesc is the grpc.ServiceDesc for API service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -2170,6 +2334,26 @@ var API_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "WriteEvent",
 			Handler:    _API_WriteEvent_Handler,
+		},
+		{
+			MethodName: "GetSubject",
+			Handler:    _API_GetSubject_Handler,
+		},
+		{
+			MethodName: "SetSubject",
+			Handler:    _API_SetSubject_Handler,
+		},
+		{
+			MethodName: "DeleteSubject",
+			Handler:    _API_DeleteSubject_Handler,
+		},
+		{
+			MethodName: "ListChildren",
+			Handler:    _API_ListChildren_Handler,
+		},
+		{
+			MethodName: "Check",
+			Handler:    _API_Check_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

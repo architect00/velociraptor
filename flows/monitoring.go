@@ -9,7 +9,6 @@ import (
 	"www.velocidex.com/golang/velociraptor/constants"
 	crypto_proto "www.velocidex.com/golang/velociraptor/crypto/proto"
 	"www.velocidex.com/golang/velociraptor/file_store"
-	flows_proto "www.velocidex.com/golang/velociraptor/flows/proto"
 	artifact_paths "www.velocidex.com/golang/velociraptor/paths/artifacts"
 	"www.velocidex.com/golang/velociraptor/result_sets"
 	"www.velocidex.com/golang/velociraptor/services"
@@ -19,7 +18,7 @@ import (
 // Receive monitoring messages from the client.
 func MonitoringProcessMessage(
 	config_obj *config_proto.Config,
-	collection_context *flows_proto.ArtifactCollectorContext,
+	collection_context *CollectionContext,
 	message *crypto_proto.VeloMessage) error {
 
 	err := FailIfError(config_obj, collection_context, message)
@@ -63,14 +62,9 @@ func MonitoringProcessMessage(
 		for _, row := range rows {
 			row.Set("ClientId", message.Source)
 		}
-		journal, err := services.GetJournal()
-		if err != nil {
-			return err
-		}
 
-		return journal.PushRowsToArtifact(
-			config_obj, rows, response.Query.Name,
-			message.Source, message.SessionId)
+		// Batch the rows to send together.
+		collection_context.batchRows(response.Query.Name, rows)
 	}
 
 	return nil
@@ -80,7 +74,7 @@ func MonitoringProcessMessage(
 // are written with a time index.
 func flushContextLogsMonitoring(
 	config_obj *config_proto.Config,
-	collection_context *flows_proto.ArtifactCollectorContext) error {
+	collection_context *CollectionContext) error {
 
 	// A single packet may have multiple log messages from
 	// different artifacts. We cache the writers so we can send
@@ -118,10 +112,44 @@ func flushContextLogsMonitoring(
 		rs_writer.Write(ordereddict.NewDict().
 			Set("_ts", int(time.Now().Unix())).
 			Set("client_time", int64(row.Timestamp)/1000000).
+			Set("level", row.Level).
 			Set("message", row.Message))
 	}
 
 	// Clear the logs from the flow object.
 	collection_context.Logs = nil
+	return nil
+}
+
+func (self *CollectionContext) batchRows(
+	artifact_name string, rows []*ordereddict.Dict) {
+	batch, _ := self.monitoring_batch[artifact_name]
+	batch = append(batch, rows...)
+	self.monitoring_batch[artifact_name] = batch
+	if len(rows) > 0 {
+		self.Dirty = true
+	}
+}
+
+func flushMonitoringLogs(
+	config_obj *config_proto.Config,
+	collection_context *CollectionContext) error {
+
+	journal, err := services.GetJournal()
+	if err != nil {
+		return err
+	}
+
+	for query_name, rows := range collection_context.monitoring_batch {
+		if len(rows) > 0 {
+			err := journal.PushRowsToArtifact(
+				config_obj, rows, query_name,
+				collection_context.ClientId,
+				collection_context.SessionId)
+			if err != nil {
+				return err
+			}
+		}
+	}
 	return nil
 }

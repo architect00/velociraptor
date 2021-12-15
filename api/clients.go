@@ -24,9 +24,9 @@ import (
 	"regexp"
 	"time"
 
-	"github.com/golang/protobuf/ptypes/empty"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/emptypb"
 	"www.velocidex.com/golang/velociraptor/acls"
 	api_proto "www.velocidex.com/golang/velociraptor/api/proto"
 	"www.velocidex.com/golang/velociraptor/datastore"
@@ -41,7 +41,7 @@ func (self *ApiServer) GetClientMetadata(
 	ctx context.Context,
 	in *api_proto.GetClientRequest) (*api_proto.ClientMetadata, error) {
 
-	user_name := GetGRPCUserInfo(self.config, ctx).Name
+	user_name := GetGRPCUserInfo(self.config, ctx, self.ca_pool).Name
 	permissions := acls.READ_RESULTS
 	if in.ClientId == "server" {
 		permissions = acls.SERVER_ADMIN
@@ -70,9 +70,9 @@ func (self *ApiServer) GetClientMetadata(
 
 func (self *ApiServer) SetClientMetadata(
 	ctx context.Context,
-	in *api_proto.ClientMetadata) (*empty.Empty, error) {
+	in *api_proto.ClientMetadata) (*emptypb.Empty, error) {
 
-	user_name := GetGRPCUserInfo(self.config, ctx).Name
+	user_name := GetGRPCUserInfo(self.config, ctx, self.ca_pool).Name
 	permissions := acls.LABEL_CLIENT
 	perm, err := acls.CheckAccess(self.config, user_name, permissions)
 	if !perm || err != nil {
@@ -87,14 +87,14 @@ func (self *ApiServer) SetClientMetadata(
 	}
 
 	err = db.SetSubject(self.config, client_path_manager.Metadata(), in)
-	return &empty.Empty{}, err
+	return &emptypb.Empty{}, err
 }
 
 func (self *ApiServer) GetClient(
 	ctx context.Context,
 	in *api_proto.GetClientRequest) (*api_proto.ApiClient, error) {
 
-	user_name := GetGRPCUserInfo(self.config, ctx).Name
+	user_name := GetGRPCUserInfo(self.config, ctx, self.ca_pool).Name
 	permissions := acls.READ_RESULTS
 	perm, err := acls.CheckAccess(self.config, user_name, permissions)
 	if !perm || err != nil {
@@ -102,6 +102,7 @@ func (self *ApiServer) GetClient(
 			"User is not allowed to view clients.")
 	}
 
+	// Update the user's MRU
 	if in.UpdateMru {
 		err = search.UpdateMRU(self.config, user_name, in.ClientId)
 		if err != nil {
@@ -109,20 +110,18 @@ func (self *ApiServer) GetClient(
 		}
 	}
 
-	api_client, err := search.GetApiClient(ctx,
-		self.config,
-		in.ClientId,
-		!in.Lightweight, // Detailed
-	)
+	api_client, err := search.FastGetApiClient(ctx, self.config, in.ClientId)
 	if err != nil {
 		return nil, err
 	}
 
-	if self.server_obj != nil && !in.Lightweight &&
-		// Wait up to 2 seconds to find out if clients are connected.
-		services.GetNotifier().IsClientConnected(ctx,
-			self.config, in.ClientId, 2) {
-		api_client.LastSeenAt = uint64(time.Now().UnixNano() / 1000)
+	if self.server_obj != nil {
+		if !in.Lightweight &&
+			// Wait up to 2 seconds to find out if clients are connected.
+			services.GetNotifier().IsClientConnected(ctx,
+				self.config, in.ClientId, 2) {
+			api_client.LastSeenAt = uint64(time.Now().UnixNano() / 1000)
+		}
 	}
 
 	return api_client, nil
@@ -132,7 +131,7 @@ func (self *ApiServer) GetClientFlows(
 	ctx context.Context,
 	in *api_proto.ApiFlowRequest) (*api_proto.ApiFlowResponse, error) {
 
-	user_name := GetGRPCUserInfo(self.config, ctx).Name
+	user_name := GetGRPCUserInfo(self.config, ctx, self.ca_pool).Name
 	permissions := acls.READ_RESULTS
 	perm, err := acls.CheckAccess(self.config, user_name, permissions)
 	if !perm || err != nil {

@@ -85,12 +85,12 @@ func (self *ServerArtifactsTestSuite) ScheduleAndWait(
 			Creator:   user,
 			ClientId:  "server",
 			Artifacts: []string{name},
+		}, func() {
+			// Notify it about the new job
+			notifier := services.GetNotifier()
+			err = notifier.NotifyListener(self.ConfigObj, "server", "")
+			assert.NoError(self.T(), err)
 		})
-	assert.NoError(self.T(), err)
-
-	// Notify it about the new job
-	notifier := services.GetNotifier()
-	err = notifier.NotifyListener(self.ConfigObj, "server")
 	assert.NoError(self.T(), err)
 
 	// Wait for the collection to complete
@@ -125,7 +125,7 @@ sources:
 
 	// How long we took to run - should be immediate
 	run_time := (details.Context.ActiveTime - details.Context.StartTime) / 1000000
-	assert.True(self.T(), run_time < 1)
+	assert.True(self.T(), run_time < 2)
 }
 
 // Collect a long lived artifact with specified timeout.

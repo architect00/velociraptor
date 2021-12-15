@@ -25,7 +25,7 @@ class UserSettings extends React.PureComponent {
     componentDidMount = () => {
         if (this.context.traits) {
             this.setState({
-                theme: this.context.traits.theme || "light-theme",
+                theme: this.context.traits.theme || "light-mode",
                 default_password: this.context.traits.default_password || "",
             });
         }
@@ -62,10 +62,14 @@ class UserSettings extends React.PureComponent {
                                       this.setState({theme: e.currentTarget.value});
 
                                       // Change the theme instantly
-                                      this.saveSettings();
+                                      this.props.setSetting({
+                                          theme: e.currentTarget.value,
+                                          default_password: this.state.default_password,
+                                      });
                                   }}>
-                      <option value="light-mode">Light Mode</option>
-                      <option value="dark-mode">Dark Mode</option>
+                      <option value="light-mode">Light (default)</option>
+                      <option value="dark-mode">Dark</option>
+                      <option value="light-pink">Strawberry Milkshake (light)</option>
                     </Form.Control>
                   </Col>
                 </Form.Group>
@@ -110,14 +114,14 @@ export default class UserLabel extends React.Component {
     }
 
     setSettings = (options) => {
-        console.log(options);
-
         // Set the ACE theme according to the theme so they match.
         let ace_options = JSON.parse(this.context.traits.ui_settings || "{}");
         if (options.theme === "dark-mode") {
             ace_options.theme = "ace/theme/terminal";
         } else if(options.theme === "light-mode") {
             ace_options.theme = "ace/theme/xcode";
+        } else if(options.theme === "light-pink") {
+          ace_options.theme = "ace/theme/xcode";
         }
         options.options = JSON.stringify(ace_options);
 

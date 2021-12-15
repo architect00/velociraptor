@@ -189,7 +189,7 @@ func getAvailableDownloadFiles(config_obj *config_proto.Config,
 
 		result.Files = append(result.Files, &api_proto.AvailableDownloadFile{
 			Name:     item.Name(),
-			Type:     api.GetExtensionForFilestore(ps, ps.Type()),
+			Type:     api.GetExtensionForFilestore(ps),
 			Path:     ps.AsClientPath(),
 			Size:     uint64(item.Size()),
 			Date:     item.ModTime().UTC().Format(time.RFC3339),
@@ -231,21 +231,22 @@ func CancelFlow(
 	}
 
 	// Get all queued tasks for the client and delete only those in this flow.
-	db, err := datastore.GetDB(config_obj)
+	client_manager, err := services.GetClientInfoManager()
 	if err != nil {
 		return nil, err
 	}
 
-	tasks, err := db.GetClientTasks(config_obj, client_id,
-		true /* do_not_lease */)
+	// Get all the tasks but only dequeue the ones intended for the
+	// cancelled flow.
+	tasks, err := client_manager.PeekClientTasks(client_id)
 	if err != nil {
 		return nil, err
 	}
 
-	// Cancel all the tasks
+	// Cancel all the relevant tasks
 	for _, task := range tasks {
 		if task.SessionId == flow_id {
-			err = db.UnQueueMessageForClient(config_obj, client_id, task)
+			err = client_manager.UnQueueMessageForClient(client_id, task)
 			if err != nil {
 				return nil, err
 			}
@@ -254,16 +255,11 @@ func CancelFlow(
 
 	// Queue a cancellation message to the client for this flow
 	// id.
-	err = db.QueueMessageForClient(config_obj, client_id,
+	err = client_manager.QueueMessageForClient(client_id,
 		&crypto_proto.VeloMessage{
 			Cancel:    &crypto_proto.Cancel{},
 			SessionId: flow_id,
-		})
-	if err != nil {
-		return nil, err
-	}
-
-	err = services.GetNotifier().NotifyListener(config_obj, client_id)
+		}, true /* notify */, nil)
 	if err != nil {
 		return nil, err
 	}

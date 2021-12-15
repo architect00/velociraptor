@@ -11,8 +11,11 @@ import (
 	"github.com/stretchr/testify/suite"
 	"www.velocidex.com/golang/velociraptor/config"
 	config_proto "www.velocidex.com/golang/velociraptor/config/proto"
+	"www.velocidex.com/golang/velociraptor/file_store"
+	"www.velocidex.com/golang/velociraptor/file_store/memory"
 	"www.velocidex.com/golang/velociraptor/services"
 	"www.velocidex.com/golang/velociraptor/services/client_info"
+	"www.velocidex.com/golang/velociraptor/services/frontend"
 	"www.velocidex.com/golang/velociraptor/services/inventory"
 	"www.velocidex.com/golang/velociraptor/services/journal"
 	"www.velocidex.com/golang/velociraptor/services/labels"
@@ -62,10 +65,24 @@ name: Generic.Client.Stats
 type: CLIENT_EVENT
 `, `
 name: System.Hunt.Participation
-type: CLIENT_EVENT
+type: INTERNAL
+`, `
+name: Server.Internal.MasterRegistrations
+type: INTERNAL
+`, `
+name: Server.Internal.ClientTasks
+type: INTERNAL
 `, `
 name: Generic.Client.Info
 type: CLIENT
+sources:
+- precondition: SELECT * FROM info()
+  query: SELECT * FROM info()
+  name: BasicInformation
+
+- precondition: SELECT * FROM info()
+  query: SELECT * FROM info()
+  name: Users
 `,
 	}
 )
@@ -78,22 +95,29 @@ type TestSuite struct {
 	Sm        *services.Service
 }
 
-func (self *TestSuite) SetupTest() {
-	var err error
+func (self *TestSuite) LoadConfig() *config_proto.Config {
 	os.Setenv("VELOCIRAPTOR_CONFIG", SERVER_CONFIG)
-
-	self.ConfigObj, err = new(config.Loader).
+	config_obj, err := new(config.Loader).
 		WithEnvLiteralLoader("VELOCIRAPTOR_CONFIG").WithRequiredFrontend().
 		WithWriteback().WithVerbose(true).
 		LoadAndValidate()
 	require.NoError(self.T(), err)
 
-	self.ConfigObj.Frontend.DoNotCompressArtifacts = true
+	config_obj.Frontend.DoNotCompressArtifacts = true
+
+	return config_obj
+}
+
+func (self *TestSuite) SetupTest() {
+	if self.ConfigObj == nil {
+		self.ConfigObj = self.LoadConfig()
+	}
 
 	// Start essential services.
 	self.Ctx, self.cancel = context.WithTimeout(context.Background(), time.Second*60)
 	self.Sm = services.NewServiceManager(self.Ctx, self.ConfigObj)
 
+	require.NoError(self.T(), self.Sm.Start(frontend.StartFrontendService))
 	require.NoError(self.T(), self.Sm.Start(journal.StartJournalService))
 	require.NoError(self.T(), self.Sm.Start(notifications.StartNotificationService))
 	require.NoError(self.T(), self.Sm.Start(inventory.StartInventoryService))
@@ -134,8 +158,23 @@ func (self *TestSuite) LoadArtifactFiles(paths ...string) {
 }
 
 func (self *TestSuite) TearDownTest() {
-	self.cancel()
-	self.Sm.Close()
-	GetMemoryFileStore(self.T(), self.ConfigObj).Clear()
-	GetMemoryDataStore(self.T(), self.ConfigObj).Clear()
+	if self.cancel != nil {
+		self.cancel()
+	}
+	if self.Sm != nil {
+		self.Sm.Close()
+	}
+
+	// These may not be memory based in the test switched to other
+	// data stores.
+	file_store_factory, ok := file_store.GetFileStore(
+		self.ConfigObj).(*memory.MemoryFileStore)
+	if ok {
+		file_store_factory.Clear()
+	}
+
+	db := GetMemoryDataStore(self.T(), self.ConfigObj)
+	if db != nil {
+		db.Clear()
+	}
 }

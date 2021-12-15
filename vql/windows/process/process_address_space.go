@@ -37,11 +37,11 @@ type ProcessReader struct {
 	offset     uint64
 	size       uint64
 	handle     syscall.Handle
-	ranges     []*VMemeInfo
-	last_range *VMemeInfo
+	ranges     []*VMemInfo
+	last_range *VMemInfo
 }
 
-func (self *ProcessReader) getRange(offset uint64) *VMemeInfo {
+func (self *ProcessReader) getRange(offset uint64) *VMemInfo {
 	if self.last_range != nil &&
 		self.last_range.Address <= offset &&
 		offset < self.last_range.Address+self.last_range.Size {

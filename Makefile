@@ -30,11 +30,17 @@ darwin_m1:
 linux:
 	go run make.go -v linux
 
+linux_bare:
+	go run make.go -v linuxBare
+
 freebsd:
 	go run make.go -v freebsd
 
 windows:
 	go run make.go -v windowsDev
+
+windows_bare:
+	go run make.go -v windowsBare
 
 windowsx86:
 	go run make.go -v windowsx86
@@ -70,4 +76,10 @@ lint:
 	golangci-lint run
 
 KapeFilesSync:
-	python3 scripts/kape_files.py ~/projects/KapeFiles/ > artifacts/definitions/Windows/KapeFiles/Targets.yaml
+	python3 scripts/kape_files.py -t win ~/projects/KapeFiles/ > artifacts/definitions/Windows/KapeFiles/Targets.yaml
+	python3 scripts/kape_files.py -t nix ~/projects/KapeFiles/ > artifacts/definitions/Linux/KapeFiles/CollectFromDirectory.yaml
+
+# Do this after fetching the build artifacts with `gh run download <RunID>`
+UpdateCIArtifacts:
+	mv artifact/server/* artifacts/testdata/server/testcases/
+	mv artifact/windows/* artifacts/testdata/windows/

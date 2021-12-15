@@ -18,10 +18,8 @@
 package flows
 
 import (
-	"github.com/golang/protobuf/proto"
-	config_proto "www.velocidex.com/golang/velociraptor/config/proto"
+	"google.golang.org/protobuf/proto"
 	crypto_proto "www.velocidex.com/golang/velociraptor/crypto/proto"
-	datastore "www.velocidex.com/golang/velociraptor/datastore"
 )
 
 // ProduceBackwardCompatibleVeloMessage is used for messages going from
@@ -64,19 +62,4 @@ func ProduceBackwardCompatibleVeloMessage(req *crypto_proto.VeloMessage) *crypto
 	}
 
 	return req
-}
-
-func QueueMessageForClient(
-	config_obj *config_proto.Config,
-	client_id string,
-	req *crypto_proto.VeloMessage) error {
-
-	req = ProduceBackwardCompatibleVeloMessage(req)
-
-	db, err := datastore.GetDB(config_obj)
-	if err != nil {
-		return err
-	}
-
-	return db.QueueMessageForClient(config_obj, client_id, req)
 }

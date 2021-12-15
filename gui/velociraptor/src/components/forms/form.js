@@ -6,6 +6,7 @@ import Form from 'react-bootstrap/Form';
 import Row from 'react-bootstrap/Row';
 import Col from 'react-bootstrap/Col';
 import Button from 'react-bootstrap/Button';
+import RegEx from './regex.js';
 
 import Tooltip from 'react-bootstrap/Tooltip';
 import OverlayTrigger from 'react-bootstrap/OverlayTrigger';
@@ -75,10 +76,12 @@ export default class VeloForm extends React.Component {
 
     render() {
         let param = this.props.param;
+        let name = param.friendly_name || param.name;
 
         switch(param.type) {
         case "hidden":
             return <></>;
+
         case "csv":
             let data = parseCSV(this.props.value);
             let columns = [{
@@ -152,7 +155,7 @@ export default class VeloForm extends React.Component {
                       delay={{show: 250, hide: 400}}
                       overlay={(props)=>renderToolTip(props, param)}>
                       <div>
-                        {param.name}
+                        {name}
                       </div>
                     </OverlayTrigger>
                   </Form.Label>
@@ -177,6 +180,27 @@ export default class VeloForm extends React.Component {
                 </Form.Group>
             );
 
+        case "regex":
+            return (
+                  <Form.Group as={Row}>
+                  <Form.Label column sm="3">
+                    <OverlayTrigger
+                      delay={{show: 250, hide: 400}}
+                      overlay={(props)=>renderToolTip(props, param)}>
+                      <div>
+                        {name}
+                      </div>
+                    </OverlayTrigger>
+                  </Form.Label>
+                    <Col sm="8">
+                      <RegEx
+                        value={this.props.value}
+                        setValue={this.props.setValue}
+                      />
+                  </Col>
+                </Form.Group>
+            );
+
         case "timestamp":
             // value prop is always a string in ISO format in UTC timezone.
             let date = convertToDate(this.props.value);
@@ -196,7 +220,7 @@ export default class VeloForm extends React.Component {
                       delay={{show: 250, hide: 400}}
                       overlay={(props)=>renderToolTip(props, param)}>
                       <div>
-                        {param.name}
+                        {name}
                       </div>
                     </OverlayTrigger>
                   </Form.Label>
@@ -246,7 +270,7 @@ export default class VeloForm extends React.Component {
                       delay={{show: 250, hide: 400}}
                       overlay={(props)=>renderToolTip(props, param)}>
                       <div>
-                        {param.name}
+                        {name}
                       </div>
                     </OverlayTrigger>
                   </Form.Label>
@@ -272,7 +296,7 @@ export default class VeloForm extends React.Component {
                       delay={{show: 250, hide: 400}}
                       overlay={(props)=>renderToolTip(props, param)}>
                       <div>
-                        {param.name}
+                        {name}
                       </div>
                     </OverlayTrigger>
                   </Form.Label>
@@ -301,7 +325,7 @@ export default class VeloForm extends React.Component {
                       delay={{show: 250, hide: 400}}
                       overlay={(props)=>renderToolTip(props, param)}>
                       <div>
-                        {param.name}
+                        {name}
                       </div>
                     </OverlayTrigger>
                   </Form.Label>

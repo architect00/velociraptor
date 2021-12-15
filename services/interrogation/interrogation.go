@@ -79,11 +79,11 @@ func (self *EnrollmentService) ProcessEnrollment(
 	}
 
 	// Get the client info from the client info manager.
-	client_info_manager := services.GetClientInfoManager()
-	if client_info_manager == nil {
-		return errors.New("Client info manager not started")
+	client_info_manager, err := services.GetClientInfoManager()
+	if err != nil {
+		return err
 	}
-	_, err := client_info_manager.Get(client_id)
+	_, err = client_info_manager.Get(client_id)
 
 	// If we have a valid client record we do not need to
 	// interrogate. Interrogation happens automatically only once
@@ -117,12 +117,20 @@ func (self *EnrollmentService) ProcessEnrollment(
 		&flows_proto.ArtifactCollectorArgs{
 			ClientId:  client_id,
 			Artifacts: []string{"Generic.Client.Info"},
+		}, func() {
+			// Notify the client
+			notifier := services.GetNotifier()
+			if notifier != nil {
+				notifier.NotifyListener(
+					config_obj, client_id, "Interrogate")
+			}
 		})
 	if err != nil {
 		return err
 	}
 
-	// Write an intermediate record while the interrogation is in flight.
+	// Write an intermediate record while the interrogation is in
+	// flight.
 	db, err := datastore.GetDB(config_obj)
 	if err != nil {
 		return err
@@ -133,7 +141,9 @@ func (self *EnrollmentService) ProcessEnrollment(
 		ClientId:              client_id,
 		LastInterrogateFlowId: flow_id,
 	}
-	err = db.SetSubject(config_obj, client_path_manager.Path(), client_info)
+
+	err = db.SetSubjectWithCompletion(
+		config_obj, client_path_manager.Path(), client_info, nil)
 	if err != nil {
 		return err
 	}
@@ -149,12 +159,6 @@ func (self *EnrollmentService) ProcessEnrollment(
 		}
 	}
 
-	// Notify the client
-	notifier := services.GetNotifier()
-	if notifier != nil {
-		return services.GetNotifier().
-			NotifyListener(config_obj, client_id)
-	}
 	return nil
 }
 
@@ -215,12 +219,34 @@ func (self *EnrollmentService) ProcessInterrogateResults(
 		return err
 	}
 
-	err = db.SetSubject(config_obj,
-		client_path_manager.Path(), client_info)
+	// Expire the client info manager to force it to fetch fresh data.
+	client_info_manager, err := services.GetClientInfoManager()
 	if err != nil {
 		return err
 	}
 
+	journal, err := services.GetJournal()
+	if err != nil {
+		return err
+	}
+
+	err = db.SetSubjectWithCompletion(config_obj,
+		client_path_manager.Path(), client_info,
+
+		// Completion
+		func() {
+			client_info_manager.Flush(client_id)
+
+			journal.PushRowsToArtifactAsync(config_obj,
+				ordereddict.NewDict().
+					Set("ClientId", client_id),
+				"Server.Internal.Interrogation")
+		})
+	if err != nil {
+		return err
+	}
+
+	// Set labels in the labeler.
 	if len(client_info.Labels) > 0 {
 		labeler := services.GetLabeler()
 		for _, label := range client_info.Labels {
@@ -231,14 +257,10 @@ func (self *EnrollmentService) ProcessInterrogateResults(
 		}
 	}
 
-	// Expire the client info manager to force it to fetch fresh data.
-	services.GetClientInfoManager().Flush(client_id)
-
 	// Update the client indexes for the GUI. Add any keywords we
 	// wish to be searchable in the UI here.
 	for _, term := range []string{
-		client_info.Hostname,
-		client_info.Fqdn,
+		"host:" + client_info.Fqdn,
 		"host:" + client_info.Hostname} {
 		err := search.SetIndex(config_obj, client_id, term)
 		if err != nil {
@@ -247,16 +269,7 @@ func (self *EnrollmentService) ProcessInterrogateResults(
 		}
 	}
 
-	journal, err := services.GetJournal()
-	if err != nil {
-		return err
-	}
-
-	return journal.PushRowsToArtifact(config_obj,
-		[]*ordereddict.Dict{ordereddict.NewDict().
-			Set("ClientId", client_id),
-		}, "Server.Internal.Interrogation", "server", "")
-
+	return nil
 }
 
 func StartInterrogationService(

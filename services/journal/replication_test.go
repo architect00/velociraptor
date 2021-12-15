@@ -2,6 +2,7 @@ package journal_test
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -20,6 +21,7 @@ import (
 	config_proto "www.velocidex.com/golang/velociraptor/config/proto"
 	"www.velocidex.com/golang/velociraptor/file_store/test_utils"
 	"www.velocidex.com/golang/velociraptor/services"
+	"www.velocidex.com/golang/velociraptor/services/frontend"
 	"www.velocidex.com/golang/velociraptor/services/inventory"
 	"www.velocidex.com/golang/velociraptor/services/journal"
 	"www.velocidex.com/golang/velociraptor/services/launcher"
@@ -27,14 +29,16 @@ import (
 	"www.velocidex.com/golang/velociraptor/services/repository"
 	"www.velocidex.com/golang/velociraptor/utils"
 	"www.velocidex.com/golang/velociraptor/vtesting"
+
+	_ "www.velocidex.com/golang/velociraptor/result_sets/timed"
 )
 
 type MockFrontendService struct {
 	mock *mock_proto.MockAPIClient
 }
 
-func (self MockFrontendService) IsMaster() bool {
-	return false
+func (self MockFrontendService) GetMinionCount() int {
+	return 0
 }
 
 // The minion replicates to the master node.
@@ -52,22 +56,33 @@ type ReplicationTestSuite struct {
 }
 
 func (self *ReplicationTestSuite) startServices() {
+	t := self.T()
+
 	ctx, _ := context.WithTimeout(context.Background(), time.Second*60)
 	self.sm = services.NewServiceManager(ctx, self.config_obj)
 
-	t := self.T()
-	assert.NoError(t, self.sm.Start(journal.StartJournalService))
+	replicator, err := journal.NewReplicationService(
+		self.sm.Ctx, self.sm.Wg, self.config_obj)
+	assert.NoError(t, err)
+
+	replicator.SetRetryDuration(100 * time.Millisecond)
+
+	assert.NoError(t, self.sm.Start(frontend.StartFrontendService))
 	assert.NoError(t, self.sm.Start(notifications.StartNotificationService))
 	assert.NoError(t, self.sm.Start(inventory.StartInventoryService))
 	assert.NoError(t, self.sm.Start(launcher.StartLauncherService))
 	assert.NoError(t, self.sm.Start(repository.StartRepositoryManagerForTest))
+}
 
-	// Set retry to be faster.
-	journal_service, err := services.GetJournal()
+func (self *ReplicationTestSuite) LoadArtifacts(definitions []string) {
+	manager, _ := services.GetRepositoryManager()
+	global_repo, err := manager.GetGlobalRepository(self.config_obj)
 	assert.NoError(self.T(), err)
 
-	replicator := journal_service.(*journal.ReplicationService)
-	replicator.SetRetryDuration(100 * time.Millisecond)
+	for _, def := range definitions {
+		_, err := global_repo.LoadYaml(def, true)
+		assert.NoError(self.T(), err)
+	}
 }
 
 func (self *ReplicationTestSuite) SetupTest() {
@@ -77,6 +92,8 @@ func (self *ReplicationTestSuite) SetupTest() {
 		WithRequiredFrontend().WithWriteback().
 		LoadAndValidate()
 	require.NoError(self.T(), err)
+
+	self.config_obj.Frontend.IsMinion = true
 
 	self.ctrl = gomock.NewController(self.T())
 	self.mock = mock_proto.NewMockAPIClient(self.ctrl)
@@ -129,16 +146,24 @@ func (self *ReplicationTestSuite) TestReplicationServiceStandardWatchers() {
 
 	self.startServices()
 
+	self.LoadArtifacts([]string{`
+name: Test.Artifact
+type: CLIENT_EVENT
+`})
+
 	// Wait here until we call all the watchers.
 	vtesting.WaitUntil(5*time.Second, self.T(), func() bool {
 		mu.Lock()
 		defer mu.Unlock()
 
+		// json.Dump(watched)
 		return vtesting.CompareStrings(watched, []string{
 			// Watch for ping requests from the
 			// master. This is used to let the master know
 			// if a client is connected to us.
 			"Server.Internal.Ping",
+			"Server.Internal.Pong",
+			"Server.Internal.MasterRegistrations",
 
 			// The notifications service will watch for
 			// notifications through us.
@@ -183,6 +208,8 @@ func (self *ReplicationTestSuite) TestSendingEvents() {
 
 	replicator := journal_service.(*journal.ReplicationService)
 	replicator.SetRetryDuration(100 * time.Millisecond)
+	replicator.ProcessMasterRegistrations(ordereddict.NewDict().
+		Set("Events", []interface{}{"Test.Artifact"}))
 
 	events = nil
 	err = journal_service.PushRowsToArtifact(self.config_obj,
@@ -216,8 +243,14 @@ func (self *ReplicationTestSuite) TestSendingEvents() {
 		assert.NoError(self.T(), err)
 	}
 
+	// Wait for events to move from the channel buffer in memory to
+	// the disk buffer.
+	time.Sleep(time.Second)
+
 	// Make sure we wrote something to the buffer file.
-	assert.True(self.T(), replicator.Buffer.GetHeader().WritePointer > 2000)
+	ptr := replicator.Buffer.GetHeader().WritePointer
+	assert.True(self.T(),
+		ptr > 2000, fmt.Sprintf("WritePointer %v", ptr))
 
 	// Wait a while to allow events to be delivered.
 	time.Sleep(time.Second)

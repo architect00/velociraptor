@@ -163,6 +163,7 @@ func main() {
 		WithEnvLoader("VELOCIRAPTOR_CONFIG").
 		WithCustomValidator(initFilestoreAccessor).
 		WithCustomValidator(initDebugServer).
+		WithCustomValidator(applyMinionRole).
 		WithLogFile(*logging_flag)
 
 	if *trace_flag != "" {
@@ -203,5 +204,7 @@ func makeDefaultConfigLoader() *config.Loader {
 		WithOverride(*override_flag).
 		WithCustomValidator(func(config_obj *config_proto.Config) error {
 			return mergeFlagConfig(config_obj, default_config)
-		})
+		}).
+		WithCustomValidator(applyMinionRole).
+		WithCustomValidator(ensureProxy)
 }

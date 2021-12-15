@@ -18,6 +18,8 @@ import (
 	"google.golang.org/protobuf/proto"
 	api_proto "www.velocidex.com/golang/velociraptor/api/proto"
 	config_proto "www.velocidex.com/golang/velociraptor/config/proto"
+	"www.velocidex.com/golang/velociraptor/datastore"
+	"www.velocidex.com/golang/velociraptor/file_store"
 	"www.velocidex.com/golang/velociraptor/grpc_client"
 	"www.velocidex.com/golang/velociraptor/logging"
 	"www.velocidex.com/golang/velociraptor/services"
@@ -178,6 +180,21 @@ func (self *MasterFrontendManager) processMetrics(ctx context.Context,
 	return nil
 }
 
+func (self *MasterFrontendManager) GetMinionCount() int {
+	res := 0
+	self.mu.Lock()
+	defer self.mu.Unlock()
+
+	for node_name, metric := range self.stats {
+		if node_name != "master" {
+			if time.Now().Sub(metric.Timestamp) < 60*time.Second {
+				res++
+			}
+		}
+	}
+	return res
+}
+
 // Every 10 seconds read the cummulative stats and update the
 // Server.Monitor.Health artifact.
 func (self *MasterFrontendManager) UpdateStats(ctx context.Context) {
@@ -231,10 +248,6 @@ func (self *MasterFrontendManager) UpdateStats(ctx context.Context) {
 	}
 }
 
-func (self MasterFrontendManager) IsMaster() bool {
-	return true
-}
-
 // The master does not replicate anywhere.
 func (self MasterFrontendManager) GetMasterAPIClient(ctx context.Context) (
 	api_proto.APIClient, func() error, error) {
@@ -264,14 +277,34 @@ func (self MasterFrontendManager) Start(ctx context.Context, wg *sync.WaitGroup,
 			ApiServer:         true,
 			FrontendServer:    true,
 			GuiServer:         true,
+			IndexServer:       true,
 		}
 	}
 
 	logger := logging.GetLogger(self.config_obj, &logging.FrontendComponent)
 	logger.Info("<green>Frontend:</> Server will be master.")
 
+	if config_obj.Datastore == nil {
+		return errors.New("Datastore must be specified")
+	}
+
+	implementation := config_obj.Datastore.MasterImplementation
+	if implementation == "" {
+		implementation = config_obj.Datastore.Implementation
+	}
+	logger.Info("<green>Filestore implementation</> %v.", implementation)
+	err := file_store.SetGlobalFilestore(implementation, config_obj)
+	if err != nil {
+		return err
+	}
+
+	err = datastore.SetGlobalDatastore(implementation, config_obj)
+	if err != nil {
+		return err
+	}
+
 	// Push our metrics to the master node.
-	err := PushMetrics(ctx, wg, config_obj, "master")
+	err = PushMetrics(ctx, wg, config_obj, "master")
 	if err != nil {
 		return err
 	}
@@ -289,6 +322,10 @@ func (self MasterFrontendManager) Start(ctx context.Context, wg *sync.WaitGroup,
 type MinionFrontendManager struct {
 	config_obj *config_proto.Config
 	name       string
+}
+
+func (self MinionFrontendManager) GetMinionCount() int {
+	return 0
 }
 
 func (self MinionFrontendManager) IsMaster() bool {
@@ -322,6 +359,22 @@ func (self *MinionFrontendManager) Start(ctx context.Context, wg *sync.WaitGroup
 	logger := logging.GetLogger(self.config_obj, &logging.FrontendComponent)
 	logger.Info("<green>Frontend:</> Server will be a minion, with ID %v.", self.name)
 
+	implementation := config_obj.Datastore.MinionImplementation
+	if implementation == "" {
+		implementation = config_obj.Datastore.Implementation
+	}
+
+	logger.Info("<green>Filestore implementation</> %v.", implementation)
+	err := file_store.SetGlobalFilestore(implementation, config_obj)
+	if err != nil {
+		return err
+	}
+
+	err = datastore.SetGlobalDatastore(implementation, config_obj)
+	if err != nil {
+		return err
+	}
+
 	// Push our metrics to the master node.
 	return PushMetrics(ctx, wg, config_obj, self.name)
 }
@@ -335,7 +388,13 @@ func StartFrontendService(ctx context.Context, wg *sync.WaitGroup,
 		return errors.New("Frontend not configured")
 	}
 
-	if config_obj.Frontend.IsMaster {
+	// Start the grpc clients
+	err := grpc_client.Init(ctx, config_obj)
+	if err != nil {
+		return err
+	}
+
+	if services.IsMaster(config_obj) {
 		manager := &MasterFrontendManager{
 			config_obj: config_obj,
 			stats:      make(map[string]*FrontendMetrics),

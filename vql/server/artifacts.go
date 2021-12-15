@@ -44,6 +44,7 @@ type ScheduleCollectionFunctionArg struct {
 	OpsPerSecond float64     `vfilter:"optional,field=ops_per_sec,doc=Set query ops_per_sec value"`
 	MaxRows      uint64      `vfilter:"optional,field=max_rows,doc=Max number of rows to fetch"`
 	MaxBytes     uint64      `vfilter:"optional,field=max_bytes,doc=Max number of bytes to upload"`
+	Urgent       bool        `vfilter:"optional,field=urgent,doc=Set the collection as urgent - skips other queues collections on the client."`
 }
 
 type ScheduleCollectionFunction struct{}
@@ -107,6 +108,7 @@ func (self *ScheduleCollectionFunction) Call(ctx context.Context,
 		Timeout:        arg.Timeout,
 		MaxRows:        arg.MaxRows,
 		MaxUploadBytes: arg.MaxBytes,
+		Urgent:         arg.Urgent,
 	}
 
 	if arg.Spec == nil && arg.Env != nil {
@@ -142,14 +144,15 @@ func (self *ScheduleCollectionFunction) Call(ctx context.Context,
 	}
 
 	flow_id, err := launcher.ScheduleArtifactCollection(
-		ctx, config_obj, acl_manager, repository, request)
-	if err != nil {
-		scope.Log("collect_client: %v", err)
-		return vfilter.Null{}
-	}
-
-	// Notify the client about it.
-	err = services.GetNotifier().NotifyListener(config_obj, arg.ClientId)
+		ctx, config_obj, acl_manager, repository, request,
+		func() {
+			// Notify the client about it.
+			notifier := services.GetNotifier()
+			if notifier != nil {
+				notifier.NotifyListener(
+					config_obj, arg.ClientId, "collect_client")
+			}
+		})
 	if err != nil {
 		scope.Log("collect_client: %v", err)
 		return vfilter.Null{}

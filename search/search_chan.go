@@ -44,8 +44,8 @@ func searchRecentsChan(
 		// Sort the children in reverse order - most recent first.
 		for i := len(children) - 1; i >= 0; i-- {
 			client_id := children[i].Base()
-			api_client, err := GetApiClient(
-				ctx, config_obj, client_id, false /* detailed */)
+			api_client, err := FastGetApiClient(
+				ctx, config_obj, client_id)
 			if err != nil {
 				continue
 			}
@@ -68,10 +68,18 @@ func SearchClientsChan(
 	config_obj *config_proto.Config,
 	search_term string, principal string) (chan *api_proto.ApiClient, error) {
 
-	operator, _ := splitIntoOperatorAndTerms(search_term)
+	operator, term := splitIntoOperatorAndTerms(search_term)
 	switch operator {
-	case "", "label", "host":
+	case "label", "host", "all":
+		// Include the operator in these search terms
 		return searchClientIndexChan(ctx, scope, config_obj, search_term)
+
+	case "client":
+		return searchClientIndexChan(ctx, scope, config_obj, term)
+
+	case "":
+		return searchClientIndexChan(ctx, scope, config_obj, "host:"+term)
+
 	case "recent":
 		return searchRecentsChan(ctx, scope, config_obj, principal)
 
@@ -92,14 +100,6 @@ func searchClientIndexChan(
 	// on the full search term.
 	prefix, filter := splitSearchTermIntoPrefixAndFilter(scope, search_term)
 
-	// For compilcated search terms we bear an additional cost of
-	// reading the index record itself but try to avoid it if
-	// possible.
-	option := OPTION_ENTITY
-	if filter != nil {
-		option = OPTION_KEY
-	}
-
 	output_chan := make(chan *api_proto.ApiClient)
 
 	go func() {
@@ -107,7 +107,8 @@ func searchClientIndexChan(
 
 		// Microseconds
 		seen := make(map[string]bool)
-		for hit := range SearchIndexWithPrefix(ctx, config_obj, prefix, option) {
+		for hit := range SearchIndexWithPrefix(ctx, config_obj, prefix,
+			OPTION_CLIENT_RECORDS) {
 			if hit == nil {
 				continue
 			}

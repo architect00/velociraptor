@@ -55,16 +55,16 @@ import (
 	"time"
 
 	"github.com/Velocidex/ordereddict"
-	"github.com/golang/protobuf/proto"
 	"golang.org/x/time/rate"
+	"google.golang.org/protobuf/proto"
 	api_proto "www.velocidex.com/golang/velociraptor/api/proto"
 	config_proto "www.velocidex.com/golang/velociraptor/config/proto"
 	"www.velocidex.com/golang/velociraptor/constants"
-	"www.velocidex.com/golang/velociraptor/datastore"
 	"www.velocidex.com/golang/velociraptor/flows"
 	flows_proto "www.velocidex.com/golang/velociraptor/flows/proto"
 	"www.velocidex.com/golang/velociraptor/logging"
 	"www.velocidex.com/golang/velociraptor/paths"
+	"www.velocidex.com/golang/velociraptor/search"
 	"www.velocidex.com/golang/velociraptor/services"
 	"www.velocidex.com/golang/velociraptor/services/journal"
 	"www.velocidex.com/golang/velociraptor/utils"
@@ -158,20 +158,15 @@ func (self *HuntManager) ProcessMutation(
 		return err
 	}
 
-	// We notify all node's hunt dispatcher only when the hunt
-	// status is changed (started or stopped).
-	notifier := services.GetNotifier()
-	if notifier == nil {
-		return errors.New("Notifier not ready")
-	}
-
 	dispatcher := services.GetHuntDispatcher()
 	if dispatcher == nil {
 		return errors.New("Hunt Dispatcher not ready")
 	}
 
-	return dispatcher.ModifyHunt(mutation.HuntId,
-		func(hunt_obj *api_proto.Hunt) error {
+	dispatcher.ModifyHunt(mutation.HuntId,
+		func(hunt_obj *api_proto.Hunt) services.HuntModificationAction {
+			modification := services.HuntUnmodified
+
 			if hunt_obj.Stats == nil {
 				hunt_obj.Stats = &api_proto.HuntStats{}
 			}
@@ -180,44 +175,65 @@ func (self *HuntManager) ProcessMutation(
 				mutation.Stats = &api_proto.HuntStats{}
 			}
 
-			hunt_obj.Stats.TotalClientsScheduled +=
-				mutation.Stats.TotalClientsScheduled
+			// The following are very frequent modifications that
+			// other frontends dont care about so we write them lazily
+			// to the datastore.
+			if mutation.Stats.TotalClientsScheduled > 0 {
+				hunt_obj.Stats.TotalClientsScheduled +=
+					mutation.Stats.TotalClientsScheduled
 
-			hunt_obj.Stats.TotalClientsWithResults +=
-				mutation.Stats.TotalClientsWithResults
+				modification = services.HuntFlushToDatastoreAsync
+			}
 
-			// Have we stopped the hunt?
+			if mutation.Stats.TotalClientsWithResults > 0 {
+				hunt_obj.Stats.TotalClientsWithResults +=
+					mutation.Stats.TotalClientsWithResults
+
+				modification = services.HuntFlushToDatastoreAsync
+			}
+
+			// These modifications affect the state of the hunt and so
+			// need to propagate to all minions
+			// immediately. Eventually they will also hit the
+			// filesystem too.
 			if mutation.State == api_proto.Hunt_STOPPED ||
 				mutation.State == api_proto.Hunt_PAUSED {
 				hunt_obj.Stats.Stopped = true
 				hunt_obj.State = api_proto.Hunt_STOPPED
-				_ = notifier.NotifyListener(
-					config_obj, "HuntDispatcher")
-			}
 
-			if mutation.State == api_proto.Hunt_RUNNING {
+				// Let all dispatchers know this hunt is stopped.
+				modification = services.HuntPropagateChanges
+
+			} else if mutation.State == api_proto.Hunt_RUNNING {
 				hunt_obj.Stats.Stopped = false
 				hunt_obj.State = api_proto.Hunt_RUNNING
-				_ = notifier.NotifyListener(
-					config_obj, "HuntDispatcher")
-			}
 
-			if mutation.State == api_proto.Hunt_ARCHIVED {
+				// This hunt is now started, let all dispatchers know
+				// to participate connected clients.
+				modification = services.HuntTriggerParticipation
+
+			} else if mutation.State == api_proto.Hunt_ARCHIVED {
 				hunt_obj.State = api_proto.Hunt_ARCHIVED
-				_ = notifier.NotifyListener(
-					config_obj, "HuntDispatcher")
+
+				modification = services.HuntPropagateChanges
 			}
 
 			if mutation.Description != "" {
 				hunt_obj.HuntDescription = mutation.Description
+
+				modification = services.HuntPropagateChanges
 			}
 
+			// Hunt is restarted, notify all connected clients
 			if mutation.StartTime > 0 {
 				hunt_obj.StartTime = mutation.StartTime
+
+				modification = services.HuntTriggerParticipation
 			}
 
-			return nil
+			return modification
 		})
+	return nil
 }
 
 // Check if the mutation requests a flow to be added to the hunt.
@@ -264,9 +280,13 @@ func (self *HuntManager) maybeDirectlyAssignFlow(
 	return nil
 }
 
-// Watch for an interrogate completion and check all the hunts on
-// this client in case the interrogate has more information (like
-// an OS condition).
+// Watch for an interrogate completion and re-check all the hunts on
+// this client in case the interrogate has more information (like an
+// OS condition). This is important if a new client appears the
+// foreman will attempt to participate it in the currrent hunt set but
+// since we have not interrogated it yet we do not know information
+// like OS, labels etc. Therefore we need to re-apply the hunts on the
+// client again once we learn these.
 func (self *HuntManager) ProcessInterrogation(
 	ctx context.Context,
 	config_obj *config_proto.Config,
@@ -398,14 +418,18 @@ func (self *HuntManager) participateInAllHunts(ctx context.Context,
 			return nil
 		}
 
-		return journal.PushRowsToArtifact(config_obj,
-			[]*ordereddict.Dict{ordereddict.NewDict().
+		journal.PushRowsToArtifactAsync(config_obj,
+			ordereddict.NewDict().
 				Set("HuntId", hunt.HuntId).
-				Set("ClientId", client_id)},
-			"System.Hunt.Participation", "server", "")
+				Set("ClientId", client_id), "System.Hunt.Participation")
+
+		return nil
 	})
 }
 
+// When a client is found to be missing a hunt, the format sends the
+// participation message. We can examine this message and decide if
+// the hunt really applies to this client.
 func (self *HuntManager) ProcessParticipation(
 	ctx context.Context,
 	config_obj *config_proto.Config,
@@ -420,9 +444,9 @@ func (self *HuntManager) ProcessParticipation(
 	}
 
 	// Get some info about the client
-	client_info_manager := services.GetClientInfoManager()
-	if client_info_manager == nil {
-		return nil
+	client_info_manager, err := services.GetClientInfoManager()
+	if err != nil {
+		return err
 	}
 
 	client_info, err := client_info_manager.Get(participation_row.ClientId)
@@ -440,6 +464,8 @@ func (self *HuntManager) ProcessParticipation(
 		participation_row.HuntId)
 	if err != nil {
 		return nil
+		return fmt.Errorf("hunt_manager: %v already ran on client %v",
+			participation_row.HuntId, participation_row.ClientId)
 	}
 
 	// Get hunt information about this hunt.
@@ -462,17 +488,21 @@ func (self *HuntManager) ProcessParticipation(
 	// Ignore stopped hunts.
 	if hunt_obj.Stats.Stopped ||
 		hunt_obj.State != api_proto.Hunt_RUNNING {
-		return errors.New("hunt is stopped")
+		// Hunt is stopped.
+		return fmt.Errorf("Hunt %v is stopped", participation_row.HuntId)
 
 	} else if !huntMatchesOS(hunt_obj, client_info) {
-		return errors.New("Hunt does not match OS condition")
+		// Hunt does not match OS condition
+		return fmt.Errorf("Hunt %v: %v does not match OS condition",
+			participation_row.HuntId, participation_row.ClientId)
 
 		// Ignore hunts with label conditions which
 		// exclude this client.
 
 	} else if !huntHasLabel(config_obj, hunt_obj,
 		participation_row.ClientId) {
-		return errors.New("hunt label does not match")
+		return fmt.Errorf("Hunt %v: hunt label does not match with %v",
+			participation_row.HuntId, participation_row.ClientId)
 	}
 
 	// Hunt limit exceeded or it expired - we stop it.
@@ -577,13 +607,14 @@ func huntMatchesOS(hunt_obj *api_proto.Hunt, client_info *services.ClientInfo) b
 		return true
 	}
 
+	os := client_info.OS()
 	switch os_condition.Os {
 	case api_proto.HuntOsCondition_WINDOWS:
-		return client_info.OS == services.Windows
+		return os == services.Windows
 	case api_proto.HuntOsCondition_LINUX:
-		return client_info.OS == services.Linux
+		return os == services.Linux
 	case api_proto.HuntOsCondition_OSX:
-		return client_info.OS == services.MacOS
+		return os == services.MacOS
 	}
 
 	return true
@@ -598,13 +629,9 @@ func huntMatchesOS(hunt_obj *api_proto.Hunt, client_info *services.ClientInfo) b
 func checkHuntRanOnClient(
 	config_obj *config_proto.Config,
 	client_id, hunt_id string) error {
-	db, err := datastore.GetDB(config_obj)
-	if err != nil {
-		return err
-	}
 
 	hunt_ids := []string{hunt_id}
-	err = db.CheckIndex(
+	err := search.CheckSimpleIndex(
 		config_obj, paths.HUNT_INDEX, client_id, hunt_ids)
 	if err == nil {
 		return errors.New("Client already ran this hunt")
@@ -615,13 +642,9 @@ func checkHuntRanOnClient(
 
 func setHuntRanOnClient(config_obj *config_proto.Config,
 	client_id, hunt_id string) error {
-	db, err := datastore.GetDB(config_obj)
-	if err != nil {
-		return err
-	}
 
 	hunt_ids := []string{hunt_id}
-	err = db.SetIndex(
+	err := search.SetSimpleIndex(
 		config_obj, paths.HUNT_INDEX, client_id, hunt_ids)
 	if err != nil {
 		return fmt.Errorf("Setting hunt index: %w", err)
@@ -653,8 +676,7 @@ func scheduleHuntOnClient(
 	}
 
 	// The request is pre-compiled into the hunt object.
-	request := &flows_proto.ArtifactCollectorArgs{}
-	proto.Merge(request, hunt_obj.StartRequest)
+	request := proto.Clone(hunt_obj.StartRequest).(*flows_proto.ArtifactCollectorArgs)
 
 	// Direct the request against our client and schedule it.
 	request.ClientId = client_id
@@ -664,7 +686,8 @@ func scheduleHuntOnClient(
 	request.Creator = hunt_id
 
 	flow_id, err := launcher.ScheduleArtifactCollection(
-		ctx, config_obj, vql_subsystem.NullACLManager{}, repository, request)
+		ctx, config_obj, vql_subsystem.NullACLManager{},
+		repository, request, nil)
 	if err != nil {
 		return err
 	}
@@ -707,12 +730,6 @@ func scheduleHuntOnClient(
 	err = setHuntRanOnClient(config_obj, client_id, hunt_id)
 	if err != nil {
 		return err
-	}
-
-	// Notify the client that the hunt applies to it.
-	notifier := services.GetNotifier()
-	if notifier != nil {
-		_ = notifier.NotifyListener(config_obj, client_id)
 	}
 
 	return nil

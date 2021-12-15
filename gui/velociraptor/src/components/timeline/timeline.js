@@ -72,10 +72,12 @@ class TimelineTableRenderer  extends Component {
 
     getTimelineClass = (name) => {
         let timelines = this.props.timelines.timelines;
-        for(let i=0;i<timelines.length;i++) {
-            if (timelines[i].id === name) {
-                return "timeline-item-" + (i + 1);
-            };
+        if (_.isArray(timelines)) {
+            for(let i=0;i<timelines.length;i++) {
+                if (timelines[i].id === name) {
+                    return "timeline-item-" + (i + 1);
+                };
+            }
         }
         return "";
     }
@@ -129,7 +131,7 @@ export default class TimelineRenderer extends React.Component {
     static propTypes = {
         name: PropTypes.string,
         notebook_id: PropTypes.string,
-        params: PropTypes.string,
+        params: PropTypes.object,
     }
 
     componentDidMount = () => {
@@ -279,10 +281,14 @@ export default class TimelineRenderer extends React.Component {
 
     render() {
         let super_timeline = {timelines:[]};
-        try {
-            super_timeline = JSON.parse(this.props.params);
-        } catch(e) {
-            return <></>;
+        if (_.isString(this.props.params)) {
+            try {
+                super_timeline = JSON.parse(this.props.params);
+            } catch(e) {
+                return <></>;
+            }
+        } else if(_.isObject(this.props.params)) {
+            super_timeline = this.props.params;
         }
 
         let groups = [{id: -1, title: "Table View"}];

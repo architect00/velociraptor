@@ -35,7 +35,7 @@ import (
 )
 
 type ClientsPluginArgs struct {
-	Search   string `vfilter:"optional,field=search,doc=Client search string. Can have the following prefixes: 'lable:', 'host:'"`
+	Search   string `vfilter:"optional,field=search,doc=Client search string. Can have the following prefixes: 'label:', 'host:'"`
 	Start    uint64 `vfilter:"optional,field=start,doc=First client to fetch (0)'"`
 	Limit    uint64 `vfilter:"optional,field=count,doc=Maximum number of clients to fetch (1000)'"`
 	ClientId string `vfilter:"optional,field=client_id"`
@@ -73,9 +73,8 @@ func (self ClientsPlugin) Call(
 
 		// If a client id is specified we do not need to search at all.
 		if arg.ClientId != "" {
-			api_client, err := vsearch.GetApiClient(
-				ctx, config_obj,
-				arg.ClientId, false /* detailed */)
+			api_client, err := vsearch.FastGetApiClient(
+				ctx, config_obj, arg.ClientId)
 			if err == nil {
 				select {
 				case <-ctx.Done():
@@ -153,8 +152,8 @@ func (self *ClientInfoFunction) Call(ctx context.Context,
 		return vfilter.Null{}
 	}
 
-	api_client, err := search.GetApiClient(ctx,
-		config_obj, arg.ClientId, false /* detailed */)
+	api_client, err := search.FastGetApiClient(ctx,
+		config_obj, arg.ClientId)
 	if err != nil {
 		scope.Log("client_info: %s", err.Error())
 		return vfilter.Null{}

@@ -19,7 +19,7 @@ import (
 
 var (
 	artifact_in_query_regex = regexp.MustCompile(`Artifact\.([^\s\(]+)\(`)
-	escape_regex            = regexp.MustCompile("(^[0-9]|[\"' ])")
+	escape_regex            = regexp.MustCompile("(^[0-9]|[\"' .-])")
 )
 
 func escape_name(name string) string {
@@ -59,6 +59,9 @@ func (self *Launcher) CompileSingleArtifact(
 		escaped_name := maybeEscape(name)
 
 		switch parameter.Type {
+		case "", "string", "regex":
+			// Nothing to do with these types.
+
 		case "int", "int64":
 			result.Query = append(result.Query, &actions_proto.VQLRequest{
 				VQL: fmt.Sprintf("LET %v <= int(int=%v)", escaped_name,

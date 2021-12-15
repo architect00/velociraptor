@@ -374,6 +374,9 @@ class VeloClientList extends Component {
             offset: this.state.start_row,
             sort: this.state.sort,
             filter: this.state.filter,
+
+            // Return all the matching client records.
+            name_only: false,
         }, this.source.token).then(resp => {
             if (resp.cancel) return;
 
@@ -591,8 +594,8 @@ export function getClientColumns() {
              return <VeloClientStatusIcon client={row}/>;
          }},
         {dataField: "client_id", text: "Client ID", type: "client"},
-        {dataField: "os_info.fqdn", text: "Hostname",
-         sort: true},
+        {dataField: "os_info.hostname", text: "Hostname", sort: true},
+        {dataField: "os_info.fqdn", text: "Fqdn", sort: true},
         {dataField: "os_info.release", text: "OS Version"},
     ]);
 }

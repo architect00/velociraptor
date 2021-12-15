@@ -5,6 +5,7 @@ package startup
 import (
 	"fmt"
 
+	"www.velocidex.com/golang/velociraptor/datastore"
 	"www.velocidex.com/golang/velociraptor/services"
 	"www.velocidex.com/golang/velociraptor/services/broadcast"
 	"www.velocidex.com/golang/velociraptor/services/client_info"
@@ -12,6 +13,7 @@ import (
 	"www.velocidex.com/golang/velociraptor/services/ddclient"
 	"www.velocidex.com/golang/velociraptor/services/hunt_dispatcher"
 	"www.velocidex.com/golang/velociraptor/services/hunt_manager"
+	"www.velocidex.com/golang/velociraptor/services/indexing"
 	"www.velocidex.com/golang/velociraptor/services/interrogation"
 	"www.velocidex.com/golang/velociraptor/services/inventory"
 	"www.velocidex.com/golang/velociraptor/services/journal"
@@ -111,19 +113,32 @@ func StartupEssentialServices(sm *services.Service) error {
 		}
 	}
 
-	if services.GetClientInfoManager() == nil {
-		err := sm.Start(client_info.StartClientInfoService)
-		if err != nil {
-			return err
-		}
-	}
-
 	return nil
 }
 
 // Start usual services that run on frontends only (i.e. not the client).
 func StartupFrontendServices(sm *services.Service) error {
 	spec := getServerServices(sm.Config)
+
+	_, err := services.GetClientInfoManager()
+	if err != nil {
+		err := sm.Start(client_info.StartClientInfoService)
+		if err != nil {
+			return err
+		}
+	}
+
+	err = sm.Start(datastore.StartMemcacheFileService)
+	if err != nil {
+		return err
+	}
+
+	if spec.IndexServer {
+		err = sm.Start(indexing.StartIndexingService)
+		if err != nil {
+			return err
+		}
+	}
 
 	// Check everything is ok before we can start.
 	if spec.ClientMonitoring {

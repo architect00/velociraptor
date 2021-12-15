@@ -101,6 +101,26 @@ func (mr *MockAPIClientMockRecorder) CancelNotebookCell(arg0, arg1 interface{}, 
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CancelNotebookCell", reflect.TypeOf((*MockAPIClient)(nil).CancelNotebookCell), varargs...)
 }
 
+// Check mocks base method.
+func (m *MockAPIClient) Check(arg0 context.Context, arg1 *proto0.HealthCheckRequest, arg2 ...grpc.CallOption) (*proto0.HealthCheckResponse, error) {
+	m.ctrl.T.Helper()
+	varargs := []interface{}{arg0, arg1}
+	for _, a := range arg2 {
+		varargs = append(varargs, a)
+	}
+	ret := m.ctrl.Call(m, "Check", varargs...)
+	ret0, _ := ret[0].(*proto0.HealthCheckResponse)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// Check indicates an expected call of Check.
+func (mr *MockAPIClientMockRecorder) Check(arg0, arg1 interface{}, arg2 ...interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	varargs := append([]interface{}{arg0, arg1}, arg2...)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Check", reflect.TypeOf((*MockAPIClient)(nil).Check), varargs...)
+}
+
 // CollectArtifact mocks base method.
 func (m *MockAPIClient) CollectArtifact(arg0 context.Context, arg1 *proto2.ArtifactCollectorArgs, arg2 ...grpc.CallOption) (*proto2.ArtifactCollectorResponse, error) {
 	m.ctrl.T.Helper()
@@ -179,6 +199,26 @@ func (mr *MockAPIClientMockRecorder) CreateNotebookDownloadFile(arg0, arg1 inter
 	mr.mock.ctrl.T.Helper()
 	varargs := append([]interface{}{arg0, arg1}, arg2...)
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CreateNotebookDownloadFile", reflect.TypeOf((*MockAPIClient)(nil).CreateNotebookDownloadFile), varargs...)
+}
+
+// DeleteSubject mocks base method.
+func (m *MockAPIClient) DeleteSubject(arg0 context.Context, arg1 *proto0.DataRequest, arg2 ...grpc.CallOption) (*emptypb.Empty, error) {
+	m.ctrl.T.Helper()
+	varargs := []interface{}{arg0, arg1}
+	for _, a := range arg2 {
+		varargs = append(varargs, a)
+	}
+	ret := m.ctrl.Call(m, "DeleteSubject", varargs...)
+	ret0, _ := ret[0].(*emptypb.Empty)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// DeleteSubject indicates an expected call of DeleteSubject.
+func (mr *MockAPIClientMockRecorder) DeleteSubject(arg0, arg1 interface{}, arg2 ...interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	varargs := append([]interface{}{arg0, arg1}, arg2...)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DeleteSubject", reflect.TypeOf((*MockAPIClient)(nil).DeleteSubject), varargs...)
 }
 
 // ExportNotebook mocks base method.
@@ -521,6 +561,26 @@ func (mr *MockAPIClientMockRecorder) GetServerMonitoringState(arg0, arg1 interfa
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetServerMonitoringState", reflect.TypeOf((*MockAPIClient)(nil).GetServerMonitoringState), varargs...)
 }
 
+// GetSubject mocks base method.
+func (m *MockAPIClient) GetSubject(arg0 context.Context, arg1 *proto0.DataRequest, arg2 ...grpc.CallOption) (*proto0.DataResponse, error) {
+	m.ctrl.T.Helper()
+	varargs := []interface{}{arg0, arg1}
+	for _, a := range arg2 {
+		varargs = append(varargs, a)
+	}
+	ret := m.ctrl.Call(m, "GetSubject", varargs...)
+	ret0, _ := ret[0].(*proto0.DataResponse)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetSubject indicates an expected call of GetSubject.
+func (mr *MockAPIClientMockRecorder) GetSubject(arg0, arg1 interface{}, arg2 ...interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	varargs := append([]interface{}{arg0, arg1}, arg2...)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetSubject", reflect.TypeOf((*MockAPIClient)(nil).GetSubject), varargs...)
+}
+
 // GetTable mocks base method.
 func (m *MockAPIClient) GetTable(arg0 context.Context, arg1 *proto0.GetTableRequest, arg2 ...grpc.CallOption) (*proto0.GetTableResponse, error) {
 	m.ctrl.T.Helper()
@@ -659,6 +719,26 @@ func (mr *MockAPIClientMockRecorder) ListAvailableEventResults(arg0, arg1 interf
 	mr.mock.ctrl.T.Helper()
 	varargs := append([]interface{}{arg0, arg1}, arg2...)
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListAvailableEventResults", reflect.TypeOf((*MockAPIClient)(nil).ListAvailableEventResults), varargs...)
+}
+
+// ListChildren mocks base method.
+func (m *MockAPIClient) ListChildren(arg0 context.Context, arg1 *proto0.DataRequest, arg2 ...grpc.CallOption) (*proto0.ListChildrenResponse, error) {
+	m.ctrl.T.Helper()
+	varargs := []interface{}{arg0, arg1}
+	for _, a := range arg2 {
+		varargs = append(varargs, a)
+	}
+	ret := m.ctrl.Call(m, "ListChildren", varargs...)
+	ret0, _ := ret[0].(*proto0.ListChildrenResponse)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// ListChildren indicates an expected call of ListChildren.
+func (mr *MockAPIClientMockRecorder) ListChildren(arg0, arg1 interface{}, arg2 ...interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	varargs := append([]interface{}{arg0, arg1}, arg2...)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListChildren", reflect.TypeOf((*MockAPIClient)(nil).ListChildren), varargs...)
 }
 
 // ListClients mocks base method.
@@ -939,6 +1019,26 @@ func (mr *MockAPIClientMockRecorder) SetServerMonitoringState(arg0, arg1 interfa
 	mr.mock.ctrl.T.Helper()
 	varargs := append([]interface{}{arg0, arg1}, arg2...)
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SetServerMonitoringState", reflect.TypeOf((*MockAPIClient)(nil).SetServerMonitoringState), varargs...)
+}
+
+// SetSubject mocks base method.
+func (m *MockAPIClient) SetSubject(arg0 context.Context, arg1 *proto0.DataRequest, arg2 ...grpc.CallOption) (*proto0.DataResponse, error) {
+	m.ctrl.T.Helper()
+	varargs := []interface{}{arg0, arg1}
+	for _, a := range arg2 {
+		varargs = append(varargs, a)
+	}
+	ret := m.ctrl.Call(m, "SetSubject", varargs...)
+	ret0, _ := ret[0].(*proto0.DataResponse)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// SetSubject indicates an expected call of SetSubject.
+func (mr *MockAPIClientMockRecorder) SetSubject(arg0, arg1 interface{}, arg2 ...interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	varargs := append([]interface{}{arg0, arg1}, arg2...)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SetSubject", reflect.TypeOf((*MockAPIClient)(nil).SetSubject), varargs...)
 }
 
 // SetToolInfo mocks base method.

@@ -13,11 +13,13 @@ import (
 	actions_proto "www.velocidex.com/golang/velociraptor/actions/proto"
 	api_proto "www.velocidex.com/golang/velociraptor/api/proto"
 	config_proto "www.velocidex.com/golang/velociraptor/config/proto"
+	crypto_proto "www.velocidex.com/golang/velociraptor/crypto/proto"
 	"www.velocidex.com/golang/velociraptor/datastore"
 	"www.velocidex.com/golang/velociraptor/file_store/test_utils"
 	"www.velocidex.com/golang/velociraptor/flows"
 	flows_proto "www.velocidex.com/golang/velociraptor/flows/proto"
 	"www.velocidex.com/golang/velociraptor/paths"
+	"www.velocidex.com/golang/velociraptor/search"
 	"www.velocidex.com/golang/velociraptor/services"
 	"www.velocidex.com/golang/velociraptor/services/frontend"
 	"www.velocidex.com/golang/velociraptor/services/hunt_dispatcher"
@@ -40,8 +42,6 @@ func (self *HuntTestSuite) SetupTest() {
 
 	self.hunt_id += "A"
 	self.expected.Creator = self.hunt_id
-
-	self.ConfigObj.Frontend.IsMaster = true
 
 	require.NoError(self.T(), self.Sm.Start(frontend.StartFrontendService))
 	require.NoError(self.T(), self.Sm.Start(hunt_dispatcher.StartHuntDispatcher))
@@ -97,7 +97,7 @@ func (self *HuntTestSuite) TestHuntManager() {
 
 	vtesting.WaitUntil(5*time.Second, self.T(), func() bool {
 		// The hunt index is updated.
-		err = db.CheckIndex(self.ConfigObj, paths.HUNT_INDEX,
+		err = search.CheckSimpleIndex(self.ConfigObj, paths.HUNT_INDEX,
 			self.client_id, []string{hunt_obj.HuntId})
 		if err != nil {
 			return false
@@ -173,7 +173,7 @@ func (self *HuntTestSuite) TestHuntWithLabelClientNoLabel() {
 
 	vtesting.WaitUntil(5*time.Second, self.T(), func() bool {
 		// The hunt index is updated since we now run on it.
-		err := db.CheckIndex(self.ConfigObj, paths.HUNT_INDEX,
+		err := search.CheckSimpleIndex(self.ConfigObj, paths.HUNT_INDEX,
 			self.client_id, []string{hunt_obj.HuntId})
 		return err == nil
 	})
@@ -235,7 +235,7 @@ func (self *HuntTestSuite) TestHuntWithLabelClientHasLabelDifferentCase() {
 	vtesting.WaitUntil(5*time.Second, self.T(), func() bool {
 		// The hunt index is updated since we have seen this client
 		// already (even if we decided not to launch on it).
-		err = db.CheckIndex(self.ConfigObj, paths.HUNT_INDEX,
+		err = search.CheckSimpleIndex(self.ConfigObj, paths.HUNT_INDEX,
 			self.client_id, []string{hunt_obj.HuntId})
 		if err != nil {
 			return false
@@ -290,7 +290,7 @@ func (self *HuntTestSuite) TestHuntWithOverride() {
 	vtesting.WaitUntil(5*time.Second, self.T(), func() bool {
 		// The hunt index is updated since we have seen this client
 		// already (even if we decided not to launch on it).
-		err = db.CheckIndex(self.ConfigObj, paths.HUNT_INDEX,
+		err = search.CheckSimpleIndex(self.ConfigObj, paths.HUNT_INDEX,
 			self.client_id, []string{hunt_obj.HuntId})
 		if err != nil {
 			return false
@@ -358,7 +358,7 @@ func (self *HuntTestSuite) TestHuntWithLabelClientHasLabel() {
 	vtesting.WaitUntil(5*time.Second, self.T(), func() bool {
 		// The hunt index is updated since we have seen this client
 		// already (even if we decided not to launch on it).
-		err = db.CheckIndex(self.ConfigObj, paths.HUNT_INDEX,
+		err = search.CheckSimpleIndex(self.ConfigObj, paths.HUNT_INDEX,
 			self.client_id, []string{hunt_obj.HuntId})
 		if err != nil {
 			return false
@@ -535,7 +535,9 @@ func (self *HuntTestSuite) TestHuntClientOSConditionInterrogation() {
 
 	client_path_manager := paths.NewClientPathManager(self.client_id)
 	err = db.SetSubject(self.ConfigObj,
-		client_path_manager.Path(), &actions_proto.ClientInfo{})
+		client_path_manager.Path(), &actions_proto.ClientInfo{
+			ClientId: self.client_id,
+		})
 	assert.NoError(t, err)
 
 	launcher.SetFlowIdForTests("F.1234")
@@ -576,7 +578,9 @@ func (self *HuntTestSuite) TestHuntClientOSConditionInterrogation() {
 		})
 	assert.NoError(t, err)
 
-	client_info_manager := services.GetClientInfoManager()
+	client_info_manager, err := services.GetClientInfoManager()
+	assert.NoError(t, err)
+
 	client_info_manager.Flush(self.client_id)
 
 	journal, err := services.GetJournal()
@@ -592,8 +596,11 @@ func (self *HuntTestSuite) TestHuntClientOSConditionInterrogation() {
 	// Ensure the hunt is collected on the client.
 	mdb := test_utils.GetMemoryDataStore(self.T(), self.ConfigObj)
 	vtesting.WaitUntil(time.Second, self.T(), func() bool {
-		value := mdb.Get("/clients/C.12326/collections/F.1234/task.db")
-		return value != nil
+		task := &crypto_proto.VeloMessage{}
+		path_manager := paths.NewFlowPathManager(self.client_id, "F.1234")
+		err := mdb.GetSubject(self.ConfigObj,
+			path_manager.Task(), task)
+		return err != nil
 	})
 }
 

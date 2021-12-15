@@ -42,7 +42,9 @@ import (
 	logging "www.velocidex.com/golang/velociraptor/logging"
 	"www.velocidex.com/golang/velociraptor/reporting"
 	"www.velocidex.com/golang/velociraptor/services"
+	"www.velocidex.com/golang/velociraptor/services/client_info"
 	"www.velocidex.com/golang/velociraptor/services/hunt_dispatcher"
+	"www.velocidex.com/golang/velociraptor/services/indexing"
 	"www.velocidex.com/golang/velociraptor/startup"
 	vql_subsystem "www.velocidex.com/golang/velociraptor/vql"
 	"www.velocidex.com/golang/velociraptor/vql/tools"
@@ -64,6 +66,11 @@ var (
 
 	testonly      = golden_command.Flag("testonly", "Do not update the fixture.").Bool()
 	disable_alarm = golden_command.Flag("disable_alarm", "Do not terminate when deadlocked.").Bool()
+
+	golden_update_datastore = golden_command.Flag("update_datastore",
+		"Normally golden tests run with the readonly datastore so as not to "+
+			"change the fixture. This flag allows updates to the fixtures.").
+		Bool()
 )
 
 type testFixture struct {
@@ -238,6 +245,12 @@ func doGolden() {
 	config_obj, err := makeDefaultConfigLoader().LoadAndValidate()
 	kingpin.FatalIfError(err, "Can not load configuration.")
 
+	// Do not update the datastore - this allows golden tests to avoid
+	// modifying the fixtures.
+	if !*golden_update_datastore {
+		config_obj.Datastore.Implementation = "ReadOnlyDataStore"
+	}
+
 	logger := logging.GetLogger(config_obj, &logging.ToolComponent)
 	logger.Info("Starting golden file test.")
 	log_writer = &MemoryLogWriter{config_obj: config_obj}
@@ -251,7 +264,14 @@ func doGolden() {
 	kingpin.FatalIfError(err, "Startup")
 	defer sm.Close()
 
+	// Start specific services needed for golden files
 	err = sm.Start(hunt_dispatcher.StartHuntDispatcher)
+	kingpin.FatalIfError(err, "Starting services")
+
+	err = sm.Start(client_info.StartClientInfoService)
+	kingpin.FatalIfError(err, "Starting services")
+
+	err = sm.Start(indexing.StartIndexingService)
 	kingpin.FatalIfError(err, "Starting services")
 
 	_, err = getRepository(config_obj)

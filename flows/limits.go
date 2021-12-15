@@ -7,7 +7,6 @@ import (
 	config_proto "www.velocidex.com/golang/velociraptor/config/proto"
 	constants "www.velocidex.com/golang/velociraptor/constants"
 	crypto_proto "www.velocidex.com/golang/velociraptor/crypto/proto"
-	"www.velocidex.com/golang/velociraptor/datastore"
 	flows_proto "www.velocidex.com/golang/velociraptor/flows/proto"
 	"www.velocidex.com/golang/velociraptor/services"
 )
@@ -26,7 +25,7 @@ var (
 // the collection is terminated and the client is notified that it is
 // cancelled.
 func checkContextResourceLimits(config_obj *config_proto.Config,
-	collection_context *flows_proto.ArtifactCollectorContext) (err error) {
+	collection_context *CollectionContext) (err error) {
 
 	// There are no resource limits on event flows.
 	if collection_context.SessionId == constants.MONITORING_WELL_KNOWN_FLOW {
@@ -61,19 +60,14 @@ func checkContextResourceLimits(config_obj *config_proto.Config,
 func cancelCollection(config_obj *config_proto.Config, client_id, flow_id string) error {
 	// Cancel the collection to stop the client from generating
 	// more data.
-	db, err := datastore.GetDB(config_obj)
-	if err != nil {
-		return err
-	}
-	err = db.QueueMessageForClient(config_obj, client_id,
-		&crypto_proto.VeloMessage{
-			Cancel:    &crypto_proto.Cancel{},
-			SessionId: flow_id,
-		})
+	client_manager, err := services.GetClientInfoManager()
 	if err != nil {
 		return err
 	}
 
-	// Notify the client immediately.
-	return services.GetNotifier().NotifyListener(config_obj, client_id)
+	return client_manager.QueueMessageForClient(client_id,
+		&crypto_proto.VeloMessage{
+			Cancel:    &crypto_proto.Cancel{},
+			SessionId: flow_id,
+		}, true /* notify */, nil)
 }

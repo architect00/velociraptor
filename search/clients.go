@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 
-	actions_proto "www.velocidex.com/golang/velociraptor/actions/proto"
 	api_proto "www.velocidex.com/golang/velociraptor/api/proto"
 	config_proto "www.velocidex.com/golang/velociraptor/config/proto"
 	crypto_proto "www.velocidex.com/golang/velociraptor/crypto/proto"
@@ -49,8 +48,12 @@ func GetApiClient(
 
 	result.Labels = labeler.GetClientLabels(config_obj, client_id)
 
-	client_info := &actions_proto.ClientInfo{}
-	err = db.GetSubject(config_obj, client_path_manager.Path(), client_info)
+	client_info_manager, err := services.GetClientInfoManager()
+	if err != nil {
+		return nil, err
+	}
+
+	client_info, err := client_info_manager.Get(client_id)
 	if err != nil {
 		return nil, err
 	}
@@ -78,14 +81,6 @@ func GetApiClient(
 	}
 
 	result.FirstSeenAt = public_key_info.EnrollTime
-
-	err = db.GetSubject(config_obj, client_path_manager.Ping(),
-		client_info)
-	if err != nil {
-		// Offline clients do not have ping files, so
-		// this is not actually an error.
-	}
-
 	result.LastSeenAt = client_info.Ping
 	result.LastIp = client_info.IpAddress
 
@@ -102,27 +97,18 @@ func FastGetApiClient(
 	config_obj *config_proto.Config,
 	client_id string) (*api_proto.ApiClient, error) {
 
-	client_info_manager := services.GetClientInfoManager()
+	client_info_manager, err := services.GetClientInfoManager()
+	if err != nil {
+		return nil, err
+	}
+
 	client_info, err := client_info_manager.Get(client_id)
 	if err != nil {
 		return nil, err
 	}
 
-	if client_info.Info == nil {
+	if client_info == nil {
 		return nil, errors.New("Invalid client_info")
-	}
-
-	db, err := datastore.GetDB(config_obj)
-	if err != nil {
-		return nil, err
-	}
-
-	ping_info := &actions_proto.ClientInfo{}
-	client_path_manager := paths.NewClientPathManager(client_id)
-	err = db.GetSubject(config_obj, client_path_manager.Ping(), ping_info)
-	if err != nil {
-		// Offline clients do not have ping files, so
-		// this is not actually an error.
 	}
 
 	labeler := services.GetLabeler()
@@ -134,18 +120,18 @@ func FastGetApiClient(
 		ClientId: client_id,
 		Labels:   labeler.GetClientLabels(config_obj, client_id),
 		AgentInformation: &api_proto.AgentInformation{
-			Version: client_info.Info.ClientVersion,
-			Name:    client_info.Info.ClientName,
+			Version: client_info.ClientVersion,
+			Name:    client_info.ClientName,
 		},
 		OsInfo: &api_proto.Uname{
-			System:   client_info.Info.System,
-			Hostname: client_info.Info.Hostname,
-			Release:  client_info.Info.Release,
-			Machine:  client_info.Info.Architecture,
-			Fqdn:     client_info.Info.Fqdn,
+			System:   client_info.System,
+			Hostname: client_info.Hostname,
+			Release:  client_info.Release,
+			Machine:  client_info.Architecture,
+			Fqdn:     client_info.Fqdn,
 		},
-		LastSeenAt:            ping_info.Ping,
-		LastIp:                ping_info.IpAddress,
-		LastInterrogateFlowId: client_info.Info.LastInterrogateFlowId,
+		LastSeenAt:            client_info.Ping,
+		LastIp:                client_info.IpAddress,
+		LastInterrogateFlowId: client_info.LastInterrogateFlowId,
 	}, nil
 }
